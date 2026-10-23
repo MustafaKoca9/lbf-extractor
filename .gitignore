@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+export/
+*.log
+*.lbf
+*.lbf[0-9]*
+.coverage
+.pytest_cache/
