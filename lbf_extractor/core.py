@@ -244,7 +244,7 @@ class LBFExtractor:
             raise
 
     def execute(self) -> None:
-        if not self.archive._opened:
+        if not self.archive.is_open:
             raise RuntimeError("Use LBFExtractor as a context manager before execute().")
 
         self.metadata.check_lock_status()

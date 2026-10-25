@@ -20,6 +20,7 @@ def _node(element: ET.Element) -> Dict[str, Any]:
         "attributes": dict(element.attrib),
         "text": raw_text,
         "text_normalized": normalized or None,
+        "tail": element.tail,
         "children": [_node(child) for child in list(element)],
     }
 

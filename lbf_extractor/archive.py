@@ -95,6 +95,11 @@ class ArchiveReader:
         self.file_handles.clear()
         self._opened = False
 
+    @property
+    def is_open(self) -> bool:
+        """Whether the logical archive is currently open for reading."""
+        return self._opened
+
     def __enter__(self) -> "ArchiveReader":
         return self.open()
 
