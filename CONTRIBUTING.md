@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve `lbf-extractor`. Please prefer focused, testable changes that preserve the existing CLI and Python API unless a change is intentional and documented.
+Thanks for helping improve `lbf-extractor`. Please prefer focused, testable changes that preserve the existing CLI and Python API unless a change is intentional and documented. Keep archive I/O, metadata parsing, output policy, and payload extraction independently composable.
 
 ## Before you start
 
@@ -23,7 +23,7 @@ python -m pip install -e ".[dev]"
 
 ```bash
 pytest -q
-python -m py_compile lbf_extractor.py
+python -m py_compile lbf_extractor/*.py
 lbf-extractor --version
 ```
 
@@ -38,7 +38,7 @@ If a change affects CLI behavior, add or update parser tests. If it affects bina
 - Validate offsets and lengths before reading or writing archive data.
 - Keep extracted paths confined to the requested output directory.
 - Keep README, CLI help, usage examples, and the changelog in sync.
-- Update `__version__` in `lbf_extractor.py` and `version` in `pyproject.toml` together when preparing a release.
+- Update `__version__` in `lbf_extractor/common.py` and `version` in `pyproject.toml` together when preparing a release.
 
 ## Commit messages
 

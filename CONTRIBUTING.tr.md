@@ -1,6 +1,6 @@
 # Katkıda bulunma
 
-`lbf-extractor` projesini geliştirmeye katkı verdiğiniz için teşekkürler. Mevcut komut satırı arayüzünü ve Python API'sini değiştirmek bilinçli bir tercih değilse küçük, sınanabilir ve geriye dönük uyumlu değişiklikleri tercih edin.
+`lbf-extractor` projesini geliştirmeye katkı verdiğiniz için teşekkürler. Mevcut komut satırı arayüzünü ve Python API'sini değiştirmek bilinçli bir tercih değilse küçük, sınanabilir ve geriye dönük uyumlu değişiklikleri tercih edin. Arşiv okuma, üstveri ayrıştırma, çıktı politikası ve payload çıkarma bileşenlerini birbirinden bağımsız tutun.
 
 ## Başlamadan önce
 
@@ -23,7 +23,7 @@ python -m pip install -e ".[dev]"
 
 ```bash
 pytest -q
-python -m py_compile lbf_extractor.py
+python -m py_compile lbf_extractor/*.py
 lbf-extractor --version
 ```
 
@@ -38,7 +38,7 @@ Komut satırı davranışı değişiyorsa ayrıştırıcı testlerini ekleyin ve
 - Arşiv verisini okumadan veya yazmadan önce ofset ve uzunlukları doğrulayın.
 - Çıkarılan dosya yollarının seçilen çıktı dizini içinde kalmasını sağlayın.
 - README, komut satırı yardımı, kullanım örnekleri ve değişiklik günlüğünü birbiriyle uyumlu tutun.
-- Sürüm yayıma hazırlanırken `lbf_extractor.py` içindeki `__version__` ile `pyproject.toml` içindeki `version` değerini birlikte güncelleyin.
+- Sürüm yayıma hazırlanırken `lbf_extractor/common.py` içindeki `__version__` ile `pyproject.toml` içindeki `version` değerini birlikte güncelleyin.
 
 ## Commit mesajları
 

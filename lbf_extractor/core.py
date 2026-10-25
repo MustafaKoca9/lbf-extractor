@@ -285,14 +285,12 @@ class LBFExtractor:
         if self.header_format == "new":
             self.used_ranges.append((0, 1))
 
-        self.stats.total_items = len(self.root.findall("BackupItem")) if self.root is not None else 0
-        self.payload.process_items(
-            root=self.root,
-            try_path_reconstruct=self.try_path_reconstruct,
-            resolve_cg_path=self.resolve_cg_path,
-            debug=self.debug,
-        ) if self.extract_files_enabled else None
+        self.stats.total_items = (
+            len(self.root.findall("BackupItem")) if self.root is not None else 0
+        )
 
+        # Preserve a complete metadata record even if a payload range later
+        # fails to write or is rejected by the output path policy.
         report_path = write_metadata_report(
             self.output,
             root=self.root,
@@ -307,6 +305,12 @@ class LBFExtractor:
         self.logger.info("Metadata report written: %s", report_path)
 
         if self.extract_files_enabled:
+            self.payload.process_items(
+                root=self.root,
+                try_path_reconstruct=self.try_path_reconstruct,
+                resolve_cg_path=self.resolve_cg_path,
+                debug=self.debug,
+            )
             self.payload.extract_unmapped_regions(self.extract_unmapped_enabled)
         else:
             self.logger.info("Metadata-only mode: payload extraction is disabled.")
