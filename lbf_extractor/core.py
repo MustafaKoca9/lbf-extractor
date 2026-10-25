@@ -1,20 +1,40 @@
+"""Extractor orchestration and public LBFExtractor class."""
 from __future__ import annotations
-import datetime,logging,os,platform,sys
-from pathlib import Path
-from typing import BinaryIO,Dict,List,Optional,Tuple
-from .common import CHUNK_SIZE,LOGGER_NAME,__author__,__version__,AuditRecord,ColoredFormatter,CorruptedArchiveError,ExtractionStats,Terminal
-from .archive import ArchiveMixin
-from .paths import PathMixin
-from .metadata import MetadataMixin
-from .extraction import ExtractionMixin
-from .reporting import ReportingMixin
-_INSTANCE_COUNTER = 0
 
-class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,ReportingMixin):
+import datetime
+import logging
+import platform
+import struct
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import BinaryIO, Dict, List, Optional, Tuple, Union
+
+from .archive import ArchiveMixin
+from .common import (
+    CHUNK_SIZE,
+    LOGGER_NAME,
+    __author__,
+    __version__,
+    AuditRecord,
+    ColoredFormatter,
+    CorruptedArchiveError,
+    ExtractionStats,
+    Terminal,
+)
+from .extraction import ExtractionMixin
+from .metadata import MetadataMixin
+from .paths import PathMixin
+from .reporting import ReportingMixin
+
+
+class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, ReportingMixin):
+    """Streaming inspector and extractor for segmented LG Mobile Switch archives."""
+
     def __init__(
         self,
-        file_path: str,
-        output_dir: str = "./export",
+        file_path: Union[str, Path],
+        output_dir: Union[str, Path] = "./export",
         try_path_reconstruct: bool = True,
         force_new_header: bool = False,
         force_old_header: bool = False,
@@ -22,25 +42,19 @@ class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,Reportin
         overwrite: bool = False,
         extract_unmapped: bool = True,
         debug: bool = False,
-        log_file: Optional[str] = None,
+        log_file: Optional[Union[str, Path]] = None,
         chunk_size: int = CHUNK_SIZE,
         extract_files: bool = True,
     ) -> None:
-        if not file_path.lower().endswith(".lbf"):
-            raise ValueError(f"Target must be a valid .lbf archive: {file_path}")
-        if chunk_size <= 0:
-            raise ValueError("chunk_size must be positive bytes")
+        self.archive_path = Path(file_path).expanduser().resolve()
+        if self.archive_path.suffix.lower() != ".lbf":
+            raise ValueError(f"Target must have a .lbf extension: {self.archive_path}")
+        if not isinstance(chunk_size, int) or isinstance(chunk_size, bool) or chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer number of bytes")
         if force_new_header and force_old_header:
-            raise ValueError(
-                "Parameters --force-new and --force-old are mutually exclusive."
-            )
+            raise ValueError("force_new_header and force_old_header are mutually exclusive")
 
-        global _INSTANCE_COUNTER
-        _INSTANCE_COUNTER += 1
-        self._instance_seq = _INSTANCE_COUNTER
-
-        self.archive_path = Path(file_path).resolve()
-        self.output_dir = Path(output_dir).resolve()
+        self.output_dir = Path(output_dir).expanduser().resolve()
         self.try_path_reconstruct = try_path_reconstruct
         self.force_new_header = force_new_header
         self.force_old_header = force_old_header
@@ -48,22 +62,22 @@ class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,Reportin
         self.overwrite = overwrite
         self.extract_unmapped_enabled = extract_unmapped
         self.debug = debug
-        self.chunk_size = int(chunk_size)
-        self.extract_files_enabled = extract_files
+        self.chunk_size = chunk_size
+        self.extract_files_enabled = bool(extract_files)
 
-        # Streaming state
+        # Streaming state. File handles are owned and closed by this instance.
         self.part_paths: List[Path] = []
         self.file_handles: List[BinaryIO] = []
         self.part_boundaries: List[int] = []
-        self.total_size: int = 0
+        self.total_size = 0
         self.used_ranges: List[Tuple[int, int]] = []
 
-        # XML metadata
+        # Parsed metadata.
         self.root: Optional[ET.Element] = None
         self.common_header: Optional[ET.Element] = None
-        self.header_format: Optional[str] = None  # "new" | "old"
+        self.header_format: Optional[str] = None
 
-        # Stats & audit
+        # Extraction results and timestamps.
         self.stats = ExtractionStats()
         self.audit_failed: List[AuditRecord] = []
         self.audit_missed: List[Dict[str, int]] = []
@@ -72,15 +86,18 @@ class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,Reportin
 
         self.logger = self._init_logger(debug, log_file)
 
-    # ---- logging ----------------------------------------------------------
-
-    def _init_logger(self, debug: bool, log_file: Optional[str]) -> logging.Logger:
-        # Per-instance logger name prevents accidental handler clobbering
-        # when multiple extractors coexist (e.g. in a library context).
-        logger = logging.getLogger(f"{LOGGER_NAME}.{self._instance_seq}")
+    def _init_logger(
+        self,
+        debug: bool,
+        log_file: Optional[Union[str, Path]],
+    ) -> logging.Logger:
+        logger = logging.getLogger(f"{LOGGER_NAME}.{id(self):x}")
         logger.setLevel(logging.DEBUG)
         logger.propagate = False
-        logger.handlers.clear()
+
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            handler.close()
 
         console = logging.StreamHandler(sys.stdout)
         console.setLevel(logging.DEBUG if debug else logging.INFO)
@@ -88,19 +105,22 @@ class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,Reportin
         logger.addHandler(console)
 
         if log_file:
-            fh = logging.FileHandler(log_file, mode="w", encoding="utf-8")
-            fh.setLevel(logging.DEBUG)
-            fh.setFormatter(
+            resolved_log = Path(log_file).expanduser().resolve()
+            if resolved_log == self.archive_path:
+                logger.removeHandler(console)
+                console.close()
+                raise ValueError("The log file must not be the archive itself.")
+            file_handler = logging.FileHandler(resolved_log, mode="w", encoding="utf-8")
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(
                 logging.Formatter(
                     "%(asctime)s [%(levelname)-8s] "
                     "<%(filename)s:%(lineno)d> %(message)s"
                 )
             )
-            logger.addHandler(fh)
+            logger.addHandler(file_handler)
 
         return logger
-
-    # ---- context manager --------------------------------------------------
 
     def __enter__(self) -> "LBFExtractor":
         Terminal.init()
@@ -108,10 +128,10 @@ class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,Reportin
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         if any(self.output_dir.iterdir()):
-            self.logger.warning(
-                "Export destination is not empty. Existing files will be "
-                "versioned to avoid collisions."
-            )
+            if self.overwrite:
+                self.logger.warning("Export destination is not empty; matching files may be replaced.")
+            else:
+                self.logger.warning("Export destination is not empty; new files will be versioned.")
 
         try:
             self._load_archive_segments()
@@ -127,42 +147,58 @@ class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,Reportin
         self.end_time = datetime.datetime.now()
 
     def _cleanup(self) -> None:
-        """Close file handles and detach the logger's handlers (idempotent)."""
-        for fh in self.file_handles:
+        """Close all owned file handles and logging handlers; safe to call repeatedly."""
+        for handle in self.file_handles:
             try:
-                fh.close()
+                handle.close()
             except OSError:
                 pass
         self.file_handles.clear()
 
-        for h in self.logger.handlers[:]:
+        for handler in list(self.logger.handlers):
+            self.logger.removeHandler(handler)
             try:
-                h.close()
+                handler.close()
             except Exception:
                 pass
-            self.logger.removeHandler(h)
-
-    # ---- banners / segment discovery -------------------------------------
 
     def _print_banner(self) -> None:
-        print(
-            f"{Terminal.CYAN}{Terminal.BOLD}LG Backup Extractor (lbf-extractor){Terminal.RESET} "
-            f"v{__version__} by {__author__}\n"
-            f"Archive: {Terminal.style(self.archive_path.name, Terminal.BOLD)} "
-            f"({self.total_size / (1024 * 1024):,.2f} MiB across "
-            f"{len(self.part_paths)} part(s))\n"
-            f"{Terminal.DIM}Platform: {platform.system()} {platform.release()} | "
-            f"Python: {platform.python_version()}{Terminal.RESET}\n"
+        banner = Terminal.style(
+            "LG Backup Extractor (lbf-extractor)", Terminal.CYAN, Terminal.BOLD
         )
+        archive_name = Terminal.style(self.archive_path.name, Terminal.BOLD)
+        platform_line = Terminal.style(
+            f"Platform: {platform.system()} {platform.release()} | "
+            f"Python: {platform.python_version()}",
+            Terminal.DIM,
+        )
+        print(
+            f"{banner} v{__version__} by {__author__}\\n"
+            f"Archive: {archive_name} ({self.total_size / (1024 * 1024):,.2f} MiB "
+            f"across {len(self.part_paths)} part(s))\\n"
+            f"{platform_line}\\n"
+        )
+
         if len(self.part_paths) > 1:
-            self.logger.info("Multipart slice assembly order:")
-            for idx, p in enumerate(self.part_paths):
-                self.logger.info(
-                    "  [%d] %s (%s bytes)", idx, p.name, f"{p.stat().st_size:,}"
-                )
+            self.logger.info("Multipart segment assembly order:")
+            previous_boundary = 0
+            for index, path in enumerate(self.part_paths):
+                boundary = self.part_boundaries[index]
+                size = boundary - previous_boundary
+                previous_boundary = boundary
+                self.logger.info("  [%d] %s (%s bytes)", index, path.name, f"{size:,}")
+
+    def _parse_candidate(self, is_new: bool) -> Tuple[ET.Element, ET.Element]:
+        root = self.parse_header(is_new)
+        common_header = root.find("Common")
+        if common_header is None:
+            raise CorruptedArchiveError(
+                "Parsed XML does not contain the required <Common> descriptor."
+            )
+        return root, common_header
 
     def execute(self) -> None:
-        """Run the complete extraction pipeline."""
+        """Inspect metadata, optionally extract payloads, then print a summary."""
         self.check_lock_status()
 
         preferred_new = (
@@ -170,53 +206,56 @@ class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,Reportin
             else False if self.force_old_header
             else True
         )
+        can_fallback = not self.force_new_header and not self.force_old_header
 
         try:
-            self.root = self.parse_header(preferred_new)
-        except Exception as primary_err:
+            self.root, self.common_header = self._parse_candidate(preferred_new)
+        except (CorruptedArchiveError, ET.ParseError, struct.error, IndexError) as primary_error:
+            if not can_fallback:
+                raise
             self.logger.warning(
-                "Primary header parse failed (%s); trying alternate scheme...",
-                primary_err,
+                "Primary header format failed (%s); trying the alternate format.",
+                primary_error,
             )
-            self.root = self.parse_header(not preferred_new)
+            self.root, self.common_header = self._parse_candidate(not preferred_new)
 
-        self.common_header = self.root.find("Common")
-        if self.common_header is None:
-            raise CorruptedArchiveError(
-                "Corrupted XML metadata: <Common> descriptor missing from header root."
-            )
-
-        is_new_el = self.common_header.find("IsNew")
+        # Some legacy headers carry IsNew=True even though the initial header
+        # layout was successfully parsed. Adopt the realigned candidate only if
+        # it also contains the required Common descriptor.
+        is_new_element = self.common_header.find("IsNew")
         if (
-            not self.force_new_header
-            and not self.force_old_header
+            can_fallback
             and self.header_format != "new"
-            and is_new_el is not None
-            and is_new_el.text == "True"
+            and is_new_element is not None
+            and is_new_element.text == "True"
         ):
+            previous_format = self.header_format
             try:
-                new_root = self.parse_header(True)
-                new_common = new_root.find("Common")
-                if new_common is not None:
-                    self.root, self.common_header = new_root, new_common
-            except Exception as err:
-                self.logger.debug(
-                    "Automated header realignment bypassed: %s", err
-                )
+                new_root, new_common = self._parse_candidate(True)
+            except (CorruptedArchiveError, ET.ParseError, struct.error, IndexError) as exc:
+                self.header_format = previous_format
+                self.logger.debug("Automatic header realignment failed: %s", exc)
+            else:
+                self.root, self.common_header = new_root, new_common
 
-        # Mark byte 0 as consumed for the modern format so the orphan
-        # scanner does not emit a spurious 1-byte "block_0x00000000".
         if self.header_format == "new":
+            # The first byte is a format marker, not an unmapped payload range.
             self.used_ranges.append((0, 1))
 
+        if self.root is not None:
+            self.stats.total_items = len(self.root.findall("BackupItem"))
+
         from .diagnostics import write_metadata_report
+
         report_path = write_metadata_report(self)
         self.logger.info("Metadata report written: %s", report_path)
+
         if self.extract_files_enabled:
             self.process_items()
             self.extract_unmapped_regions()
         else:
-            self.logger.info("Metadata-only mode: file extraction is disabled.")
+            self.logger.info("Metadata-only mode: payload extraction is disabled.")
+
         self.end_time = datetime.datetime.now()
         self.print_summary_box()
-        self.logger.info("Extraction completed successfully.")
+        self.logger.info("Processing completed successfully.")

@@ -1,49 +1,261 @@
-"""Machine-readable metadata reports for format research."""
+"""Detailed, machine-readable metadata and archive-range diagnostics."""
+from __future__ import annotations
+
 import json
+from typing import Any, Dict, List, Tuple
+import xml.etree.ElementTree as ET
 
-def _node(element):
-    return {"tag": element.tag, "attributes": dict(element.attrib), "text": (element.text or "").strip() or None, "children": [_node(child) for child in list(element)]}
+from .common import __version__
 
-def build_metadata_report(extractor):
-    entries = []
-    diagnostics = []
+
+def _node(element: ET.Element) -> Dict[str, Any]:
+    """Serialize an XML node while retaining both raw and normalized text."""
+    raw_text = element.text
+    normalized = raw_text.strip() if raw_text is not None else ""
+    return {
+        "tag": element.tag,
+        "attributes": dict(element.attrib),
+        "text": raw_text,
+        "text_normalized": normalized or None,
+        "children": [_node(child) for child in list(element)],
+    }
+
+
+def _range_details(
+    attributes: Dict[str, str],
+    total_size: int,
+) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
+    raw_offset = attributes.get("StartOffset")
+    raw_size = attributes.get("DataSize")
+    details: Dict[str, Any] = {
+        "start_offset_raw": raw_offset,
+        "data_size_raw": raw_size,
+        "start_offset": None,
+        "data_size": None,
+    }
+
+    if raw_offset is None or raw_size is None:
+        details["range_status"] = "missing_numeric_field"
+        problem = {
+            "code": details["range_status"],
+            "start_offset_raw": raw_offset,
+            "data_size_raw": raw_size,
+            "message": "StartOffset or DataSize is missing.",
+        }
+        return details, problem
+
+    try:
+        offset = int(raw_offset)
+        size = int(raw_size)
+    except (TypeError, ValueError):
+        details["range_status"] = "unparsed_numeric_field"
+        problem = {
+            "code": details["range_status"],
+            "start_offset_raw": raw_offset,
+            "data_size_raw": raw_size,
+            "message": "StartOffset or DataSize is not an integer.",
+        }
+        return details, problem
+
+    details["start_offset"] = offset
+    details["data_size"] = size
+    if offset < 0 or size < 0 or offset > total_size or size > total_size - offset:
+        details["range_status"] = "invalid_or_out_of_bounds"
+        problem = {
+            "code": details["range_status"],
+            "start_offset_raw": raw_offset,
+            "data_size_raw": raw_size,
+            "message": "The parsed range is negative or outside the archive bounds.",
+        }
+    else:
+        details["range_status"] = "valid"
+        problem = None
+
+    return details, problem
+
+
+def build_metadata_report(extractor) -> Dict[str, Any]:
     root = extractor.root
+    entries: List[Dict[str, Any]] = []
+    payload_ranges: List[Dict[str, Any]] = []
+    diagnostics: List[Dict[str, Any]] = []
+
     if root is not None:
-        for index, item in enumerate(root.findall("BackupItem")):
+        for item_index, item in enumerate(root.findall("BackupItem")):
             category = item.get("Category", "UNKNOWN")
-            attrs = dict(item.attrib)
-            raw_offset, raw_size = attrs.get("StartOffset"), attrs.get("DataSize")
-            try:
-                offset = int(raw_offset) if raw_offset is not None else None
-                size = int(raw_size) if raw_size is not None else None
-                valid = offset is not None and size is not None and offset >= 0 and size >= 0 and offset + size <= extractor.total_size
-                status = "valid" if valid else "invalid_or_out_of_bounds"
-            except (TypeError, ValueError):
-                offset = size = None
-                status = "unparsed_numeric_field"
-            original = attrs.get("FileName") or category
-            resolved, resolution = original, "not_applicable"
+            attributes = dict(item.attrib)
+            if category == "APPLICATION" and item.findall("APPLICATION"):
+                payload_nodes = item.findall("APPLICATION")
+                payload_kind = "application"
+            else:
+                payload_nodes = [item]
+                payload_kind = "catalog_item"
+
+            payload_indices = []
+            for payload_index, payload_node in enumerate(payload_nodes):
+                payload_attributes = dict(payload_node.attrib)
+                range_details, range_problem = _range_details(
+                    payload_attributes, extractor.total_size
+                )
+                payload = {
+                    "item_index": item_index,
+                    "payload_index": payload_index,
+                    "kind": payload_kind,
+                    "category": category,
+                    "name": (
+                        payload_attributes.get("FileName")
+                        or payload_attributes.get("Name")
+                        or attributes.get("FileName")
+                        or category
+                    ),
+                    "attributes": payload_attributes,
+                    "uninterpreted_attributes": {
+                        key: value
+                        for key, value in payload_attributes.items()
+                        if key not in {"Category", "FileName", "Name", "StartOffset", "DataSize"}
+                    },
+                    **range_details,
+                    "xml": _node(payload_node),
+                }
+                payload_ranges.append(payload)
+                payload_indices.append(len(payload_ranges) - 1)
+
+                if range_problem is not None:
+                    diagnostics.append(
+                        {
+                            **range_problem,
+                            "item_index": item_index,
+                            "payload_index": payload_index,
+                            "category": category,
+                        }
+                    )
+
             if "_CG_" in category:
-                resolved = extractor.resolve_cg_path(category) if extractor.try_path_reconstruct else category
-                resolution = "resolved" if resolved != category else "unresolved"
-                if resolution == "unresolved":
-                    diagnostics.append({"code": "unresolved_cg_path", "item_index": index, "category": category, "message": "Path reference could not be reconstructed."})
-            if status != "valid":
-                diagnostics.append({"code": status, "item_index": index, "category": category, "start_offset_raw": raw_offset, "data_size_raw": raw_size, "message": "Offset/size is missing, malformed, negative, or outside archive bounds."})
-            entries.append({"index": index, "category": category, "attributes": attrs, "start_offset_raw": raw_offset, "start_offset": offset, "data_size_raw": raw_size, "data_size": size, "range_status": status, "path_resolution": {"input": original, "resolved": resolved, "status": resolution}, "xml": _node(item)})
-    common = extractor.common_header
-    return {"report_schema_version": 1, "tool": {"name": "lbf-extractor", "version": "1.3.0"}, "archive": {"input_name": extractor.archive_path.name, "total_size_bytes": extractor.total_size, "segments": [{"name": p.name, "size_bytes": p.stat().st_size} for p in extractor.part_paths], "header_format": extractor.header_format}, "analysis": {"catalog_item_count": len(entries), "diagnostic_count": len(diagnostics), "extract_files_enabled": extractor.extract_files_enabled}, "common_metadata": _node(common) if common is not None else None, "catalog_items": entries, "diagnostics": diagnostics, "full_header_tree": _node(root) if root is not None else None, "sharing_guidance": "Redact personal identifiers, paths, contacts, and message metadata before sharing."}
+                resolved = (
+                    extractor.resolve_cg_path(category)
+                    if extractor.try_path_reconstruct
+                    else category
+                )
+                resolution_status = "resolved" if resolved != category else "unresolved"
+                if resolution_status == "unresolved":
+                    diagnostics.append(
+                        {
+                            "code": "unresolved_cg_path",
+                            "item_index": item_index,
+                            "category": category,
+                            "message": "The category contains a CG reference that could not be reconstructed.",
+                        }
+                    )
+                path_input = category
+            else:
+                path_input = attributes.get("FileName") or category
+                resolved = path_input
+                resolution_status = "not_applicable"
+
+            entries.append(
+                {
+                    "index": item_index,
+                    "category": category,
+                    "attributes": attributes,
+                    "uninterpreted_attributes": {
+                        key: value
+                        for key, value in attributes.items()
+                        if key not in {"Category", "FileName", "StartOffset", "DataSize"}
+                    },
+                    "payload_range_indices": payload_indices,
+                    "path_resolution": {
+                        "input": path_input,
+                        "resolved": resolved,
+                        "status": resolution_status,
+                    },
+                    "xml": _node(item),
+                }
+            )
+
+    segments = []
+    previous_boundary = 0
+    for index, path in enumerate(extractor.part_paths):
+        boundary = extractor.part_boundaries[index]
+        segments.append(
+            {
+                "name": path.name,
+                "size_bytes": boundary - previous_boundary,
+            }
+        )
+        previous_boundary = boundary
+
+    common_header = extractor.common_header
+    return {
+        "report_schema_version": 2,
+        "tool": {"name": "lbf-extractor", "version": __version__},
+        "archive": {
+            "input_name": extractor.archive_path.name,
+            "total_size_bytes": extractor.total_size,
+            "segments": segments,
+            "header_format": extractor.header_format,
+        },
+        "analysis": {
+            "catalog_item_count": len(entries),
+            "payload_range_count": len(payload_ranges),
+            "diagnostic_count": len(diagnostics),
+            "extract_files_enabled": extractor.extract_files_enabled,
+            "range_status_note": (
+                "A valid range is only numerically within archive bounds; "
+                "it is not proof that the format interpretation is correct."
+            ),
+        },
+        "common_metadata": _node(common_header) if common_header is not None else None,
+        "catalog_items": entries,
+        "payload_ranges": payload_ranges,
+        "diagnostics": diagnostics,
+        "full_header_tree": _node(root) if root is not None else None,
+        "sharing_guidance": (
+            "This report may contain personal identifiers, paths, contacts, "
+            "and message metadata. Redact sensitive data before sharing."
+        ),
+    }
+
 
 def write_metadata_report(extractor):
+    """Write the JSON source report and a short Markdown index."""
     extractor.output_dir.mkdir(parents=True, exist_ok=True)
     report = build_metadata_report(extractor)
-    target = extractor.output_dir / "metadata_report.json"
-    target.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    lines = ["# Metadata analysis report", "", f"- Archive: {report['archive']['input_name']}", f"- Size: {report['archive']['total_size_bytes']} bytes", f"- Header format: {report['archive']['header_format']}", f"- Catalog entries: {report['analysis']['catalog_item_count']}", f"- Diagnostics: {report['analysis']['diagnostic_count']}", "", "## Diagnostics", ""]
+    json_target = extractor.get_safe_destination("metadata_report.json")
+    markdown_target = extractor.get_safe_destination("metadata_report.md")
+
+    json_target.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\\n",
+        encoding="utf-8",
+    )
+    lines = [
+        "# Metadata analysis report",
+        "",
+        f"- Archive: {report['archive']['input_name']}",
+        f"- Size: {report['archive']['total_size_bytes']} bytes",
+        f"- Header format: {report['archive']['header_format']}",
+        f"- Catalog entries: {report['analysis']['catalog_item_count']}",
+        f"- Payload ranges: {report['analysis']['payload_range_count']}",
+        f"- Diagnostics: {report['analysis']['diagnostic_count']}",
+        "",
+        "## Diagnostics",
+        "",
+    ]
     if not report["diagnostics"]:
-        lines.append("No structural diagnostics detected; this does not prove every interpretation is semantically correct.")
+        lines.append(
+            "No structural diagnostics detected. This does not prove every "
+            "interpretation is semantically correct."
+        )
     for item in report["diagnostics"]:
-        lines.append(f"- **{item['code']}** (item {item.get('item_index', 'n/a')}): {item['message']}")
-    lines.extend(["", "Full raw fields and parsed XML are in metadata_report.json.", "Review and redact personal data before sharing."])
-    (extractor.output_dir / "metadata_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return target
+        lines.append(
+            f"- **{item['code']}** "
+            f"(item {item.get('item_index', 'n/a')}): {item['message']}"
+        )
+    lines.extend(
+        [
+            "",
+            "The JSON report retains raw attributes, XML, and parsed range fields.",
+            "Review and redact personal data before sharing.",
+        ]
+    )
+    markdown_target.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    return json_target
