@@ -3,13 +3,16 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from .archive import ArchiveReader
 from .common import __version__
+from .paths import OutputManager
 
 
 def _node(element: ET.Element) -> Dict[str, Any]:
-    """Serialize an XML node while retaining both raw and normalized text."""
+    """Serialize raw XML text and every descendant without interpreting unknown fields."""
     raw_text = element.text
     normalized = raw_text.strip() if raw_text is not None else ""
     return {
@@ -36,26 +39,24 @@ def _range_details(
 
     if raw_offset is None or raw_size is None:
         details["range_status"] = "missing_numeric_field"
-        problem = {
+        return details, {
             "code": details["range_status"],
             "start_offset_raw": raw_offset,
             "data_size_raw": raw_size,
             "message": "StartOffset or DataSize is missing.",
         }
-        return details, problem
 
     try:
         offset = int(raw_offset)
         size = int(raw_size)
     except (TypeError, ValueError):
         details["range_status"] = "unparsed_numeric_field"
-        problem = {
+        return details, {
             "code": details["range_status"],
             "start_offset_raw": raw_offset,
             "data_size_raw": raw_size,
             "message": "StartOffset or DataSize is not an integer.",
         }
-        return details, problem
 
     details["start_offset"] = offset
     details["data_size"] = size
@@ -70,12 +71,20 @@ def _range_details(
     else:
         details["range_status"] = "valid"
         problem = None
-
     return details, problem
 
 
-def build_metadata_report(extractor) -> Dict[str, Any]:
-    root = extractor.root
+def build_metadata_report(
+    *,
+    root: Optional[ET.Element],
+    common_header: Optional[ET.Element],
+    archive_path: Path,
+    archive: ArchiveReader,
+    header_format: Optional[str],
+    extract_files_enabled: bool,
+    try_path_reconstruct: bool,
+    resolve_cg_path: Callable[[str], str],
+) -> Dict[str, Any]:
     entries: List[Dict[str, Any]] = []
     payload_ranges: List[Dict[str, Any]] = []
     diagnostics: List[Dict[str, Any]] = []
@@ -95,7 +104,7 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
             for payload_index, payload_node in enumerate(payload_nodes):
                 payload_attributes = dict(payload_node.attrib)
                 range_details, range_problem = _range_details(
-                    payload_attributes, extractor.total_size
+                    payload_attributes, archive.total_size
                 )
                 payload = {
                     "item_index": item_index,
@@ -121,7 +130,6 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
                 }
                 payload_ranges.append(payload)
                 payload_indices.append(len(payload_ranges) - 1)
-
                 if range_problem is not None:
                     diagnostics.append(
                         {
@@ -133,14 +141,12 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
                     )
 
             if "_CG_" in category:
-                if not extractor.try_path_reconstruct:
+                if not try_path_reconstruct:
                     resolved = category
                     resolution_status = "reconstruction_disabled"
                 else:
-                    resolved = extractor.resolve_cg_path(category)
-                    resolution_status = (
-                        "resolved" if resolved != category else "unresolved"
-                    )
+                    resolved = resolve_cg_path(category)
+                    resolution_status = "resolved" if resolved != category else "unresolved"
                 if resolution_status == "unresolved":
                     diagnostics.append(
                         {
@@ -181,31 +187,27 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
 
     segments = []
     previous_boundary = 0
-    for index, path in enumerate(extractor.part_paths):
-        boundary = extractor.part_boundaries[index]
+    for index, path in enumerate(archive.part_paths):
+        boundary = archive.part_boundaries[index]
         segments.append(
-            {
-                "name": path.name,
-                "size_bytes": boundary - previous_boundary,
-            }
+            {"name": path.name, "size_bytes": boundary - previous_boundary}
         )
         previous_boundary = boundary
 
-    common_header = extractor.common_header
     return {
         "report_schema_version": 2,
         "tool": {"name": "lbf-extractor", "version": __version__},
         "archive": {
-            "input_name": extractor.archive_path.name,
-            "total_size_bytes": extractor.total_size,
+            "input_name": archive_path.name,
+            "total_size_bytes": archive.total_size,
             "segments": segments,
-            "header_format": extractor.header_format,
+            "header_format": header_format,
         },
         "analysis": {
             "catalog_item_count": len(entries),
             "payload_range_count": len(payload_ranges),
             "diagnostic_count": len(diagnostics),
-            "extract_files_enabled": extractor.extract_files_enabled,
+            "extract_files_enabled": extract_files_enabled,
             "range_status_note": (
                 "A valid range is only numerically within archive bounds; "
                 "it is not proof that the format interpretation is correct."
@@ -223,10 +225,30 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
     }
 
 
-def write_metadata_report(extractor):
-    """Write the JSON source report and a short Markdown index."""
-    report = build_metadata_report(extractor)
-    json_target = extractor.write_text_safely(
+def write_metadata_report(
+    output: OutputManager,
+    *,
+    root: Optional[ET.Element],
+    common_header: Optional[ET.Element],
+    archive_path: Path,
+    archive: ArchiveReader,
+    header_format: Optional[str],
+    extract_files_enabled: bool,
+    try_path_reconstruct: bool,
+    resolve_cg_path: Callable[[str], str],
+) -> Path:
+    """Write the full JSON record and a short Markdown summary."""
+    report = build_metadata_report(
+        root=root,
+        common_header=common_header,
+        archive_path=archive_path,
+        archive=archive,
+        header_format=header_format,
+        extract_files_enabled=extract_files_enabled,
+        try_path_reconstruct=try_path_reconstruct,
+        resolve_cg_path=resolve_cg_path,
+    )
+    json_target = output.write_text_safely(
         "metadata_report.json",
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
     )
@@ -261,5 +283,5 @@ def write_metadata_report(extractor):
             "Review and redact personal data before sharing.",
         ]
     )
-    extractor.write_text_safely("metadata_report.md", "\n".join(lines) + "\n")
+    output.write_text_safely("metadata_report.md", "\n".join(lines) + "\n")
     return json_target

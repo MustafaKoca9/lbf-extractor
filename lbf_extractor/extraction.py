@@ -1,15 +1,55 @@
-"""Payload streaming, catalog traversal, and unmapped-range recovery."""
+"""Payload extraction and unmapped-range recovery as an independent component."""
 from __future__ import annotations
 
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
+import xml.etree.ElementTree as ET
 
-from .common import AuditRecord, SecurityError, Terminal, TRAILER_SIZE
+from .archive import ArchiveReader
+from .common import (
+    CHUNK_SIZE,
+    AuditRecord,
+    ExtractionStats,
+    SecurityError,
+    Terminal,
+    TRAILER_SIZE,
+)
+from .paths import OutputManager
 
 
-class ExtractionMixin:
+class PayloadExtractor:
+    """Extract catalog ranges using an archive reader and an output policy."""
+
+    def __init__(
+        self,
+        archive: ArchiveReader,
+        output: OutputManager,
+        logger,
+        chunk_size: int = CHUNK_SIZE,
+        try_path_reconstruct: bool = True,
+        extract_unmapped: bool = True,
+        stats: Optional[ExtractionStats] = None,
+        audit_failed: Optional[List[AuditRecord]] = None,
+        audit_missed: Optional[List[Dict[str, Union[str, int]]]] = None,
+    ) -> None:
+        if not isinstance(chunk_size, int) or isinstance(chunk_size, bool) or chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer")
+        self.archive = archive
+        self.output = output
+        self.logger = logger
+        self.chunk_size = chunk_size
+        self.try_path_reconstruct = try_path_reconstruct
+        self.extract_unmapped_enabled = extract_unmapped
+        self.stats = stats if stats is not None else ExtractionStats()
+        self.audit_failed = audit_failed if audit_failed is not None else []
+        self.audit_missed = audit_missed if audit_missed is not None else []
+        # Share this list with ArchiveReader so metadata reads and payload ranges
+        # participate in the same merged-range analysis.
+        self.used_ranges = archive.used_ranges
+        self.root: Optional[ET.Element] = None
+
     def extract_stream(
         self,
         target_rel_path: str,
@@ -17,63 +57,49 @@ class ExtractionMixin:
         length: int,
         is_missed: bool = False,
     ) -> bool:
-        """Stream one archive range through a temporary file and publish it safely."""
         if length <= 0:
             return False
 
-        if offset < 0 or offset >= self.total_size or length > self.total_size - offset:
+        total_size = self.archive.total_size
+        if offset < 0 or offset >= total_size or length > total_size - offset:
             reason = (
                 f"Archive range is out of bounds: offset={offset}, length={length}, "
-                f"archive_size={self.total_size}"
+                f"archive_size={total_size}"
             )
             self._record_failure(target_rel_path, offset, length, reason, is_missed)
             self.logger.error("Skipping invalid range for %s: %s", target_rel_path, reason)
             return False
 
-        # Record valid catalog ranges even if a destination path is rejected:
-        # they are still referenced by metadata, not unmapped archive data.
+        # Even if a destination is blocked, metadata still references this range.
         self.used_ranges.append((offset, length))
-
         temporary_path: Optional[Path] = None
-        try:
-            destination = self.get_safe_destination(target_rel_path)
-            destination.parent.mkdir(parents=True, exist_ok=True)
 
+        try:
+            destination = self.output.get_safe_destination(target_rel_path)
+            destination.parent.mkdir(parents=True, exist_ok=True)
             all_zero = True
-            bytes_left = length
-            cursor = offset
+            bytes_written = 0
+
             with tempfile.NamedTemporaryFile(
                 mode="wb",
                 prefix=f".{destination.name}.",
                 suffix=".part",
                 dir=str(destination.parent),
                 delete=False,
-            ) as output:
-                temporary_path = Path(output.name)
-                while bytes_left > 0:
-                    index = self._find_slice_index(cursor)
-                    slice_start = (
-                        cursor if index == 0
-                        else cursor - self.part_boundaries[index - 1]
-                    )
-                    take = min(
-                        bytes_left,
-                        self.part_boundaries[index] - cursor,
-                        self.chunk_size,
-                    )
-                    self.file_handles[index].seek(slice_start)
-                    chunk = self.file_handles[index].read(take)
-                    if not chunk:
-                        raise OSError("Unexpected end of archive stream.")
-
+            ) as output_stream:
+                temporary_path = Path(output_stream.name)
+                for chunk in self.archive.iter_range(offset, length, self.chunk_size):
                     if all_zero and any(chunk):
                         all_zero = False
-                    written = output.write(chunk)
+                    written = output_stream.write(chunk)
                     if written != len(chunk):
                         raise OSError("Short write while writing an extracted file.")
+                    bytes_written += written
 
-                    bytes_left -= len(chunk)
-                    cursor += len(chunk)
+            if bytes_written != length:
+                raise OSError(
+                    f"Incomplete range write: expected {length} bytes, wrote {bytes_written}."
+                )
 
             if all_zero:
                 temporary_path.unlink(missing_ok=True)
@@ -82,13 +108,12 @@ class ExtractionMixin:
                     self.stats.skipped_null += 1
                 return False
 
-            destination = self.publish_temp_file(temporary_path, destination)
-
+            destination = self.output.publish_temp_file(temporary_path, destination)
             if not is_missed:
                 self.stats.extracted += 1
             self.logger.debug(
                 "Saved %s (%s bytes)",
-                destination.relative_to(self.output_dir),
+                destination.relative_to(self.output.output_dir),
                 f"{length:,}",
             )
             return True
@@ -109,7 +134,12 @@ class ExtractionMixin:
                     pass
 
     def _record_failure(
-        self, path: str, offset: int, length: int, reason: str, is_missed: bool
+        self,
+        path: str,
+        offset: int,
+        length: int,
+        reason: str,
+        is_missed: bool,
     ) -> None:
         if is_missed:
             self.stats.missed_failed += 1
@@ -125,8 +155,8 @@ class ExtractionMixin:
             )
         )
 
-    def _render_progress(self, current: int, total: int, filename: str) -> None:
-        if self.debug or not Terminal.enabled() or total == 0:
+    def _render_progress(self, current: int, total: int, filename: str, debug: bool) -> None:
+        if debug or not Terminal.enabled() or total == 0:
             return
 
         bar_length = 26
@@ -144,64 +174,73 @@ class ExtractionMixin:
         )
         sys.stdout.flush()
 
-    def process_items(self) -> None:
-        if self.root is None:
+    def process_items(
+        self,
+        root: Optional[ET.Element],
+        try_path_reconstruct: bool,
+        resolve_cg_path: Callable[[str], str],
+        debug: bool = False,
+    ) -> None:
+        self.root = root
+        if root is None:
             return
 
-        items = self.root.findall("BackupItem")
+        items = root.findall("BackupItem")
         self.stats.total_items = len(items)
         self.logger.info("Processing %s catalog entries...", len(items))
 
         for index, item in enumerate(items, start=1):
             category = item.get("Category", "UNKNOWN")
             display_name = category
-            try:
-                if category == "APPLICATION":
-                    apps = item.findall("APPLICATION")
-                    for app in apps:
+            if category == "APPLICATION":
+                for app in item.findall("APPLICATION"):
+                    try:
                         raw_name = app.get("FileName") or app.get("Name") or "unknown.apk"
                         clean_name = Path(raw_name.replace("\\", "/")).name
                         display_name = f"app/{clean_name}"
-                        self.extract_stream(
-                            display_name,
-                            int(app.get("StartOffset", "0")),
-                            int(app.get("DataSize", "0")),
+                        offset = int(app.get("StartOffset", "0"))
+                        size = int(app.get("DataSize", "0"))
+                        self.extract_stream(display_name, offset, size)
+                    except (ValueError, TypeError) as exc:
+                        self.logger.error(
+                            "Skipping malformed application entry: %s", exc
                         )
-                else:
+                        self.stats.failed += 1
+            else:
+                try:
                     file_name = item.get("FileName", "")
                     destination_name = f"{category}-{file_name}".rstrip("-")
-                    if "_CG_" in category and self.try_path_reconstruct:
-                        resolved = self.resolve_cg_path(category).lstrip("/")
+                    if "_CG_" in category and try_path_reconstruct:
+                        resolved = resolve_cg_path(category).lstrip("/")
                         destination_name = f"media/{resolved}"
                     else:
                         destination_name = f"records/{destination_name}"
 
                     display_name = destination_name
-                    self.extract_stream(
-                        destination_name,
-                        int(item.get("StartOffset", "0")),
-                        int(item.get("DataSize", "0")),
+                    offset = int(item.get("StartOffset", "0"))
+                    size = int(item.get("DataSize", "0"))
+                    self.extract_stream(destination_name, offset, size)
+                except (ValueError, TypeError) as exc:
+                    self.logger.error(
+                        "Skipping malformed catalog entry [%s]: %s", category, exc
                     )
-            except (ValueError, TypeError) as exc:
-                self.logger.error(
-                    "Skipping malformed catalog entry [%s]: %s", category, exc
-                )
-                self.stats.failed += 1
+                    self.stats.failed += 1
 
-            self._render_progress(index, len(items), display_name)
+            self._render_progress(index, len(items), display_name, debug)
 
-        if not self.debug and Terminal.enabled() and items:
+        if not debug and Terminal.enabled() and items:
             sys.stdout.write("\r\x1b[K")
             sys.stdout.flush()
 
-    def extract_unmapped_regions(self) -> None:
-        """Recover archive ranges not covered by header/catalog reads."""
-        if not self.extract_unmapped_enabled:
+    def extract_unmapped_regions(self, enabled: Optional[bool] = None) -> None:
+        if enabled is None:
+            enabled = self.extract_unmapped_enabled
+        if not enabled:
             self.logger.info("Skipping unmapped-range recovery (--no-unmapped).")
             return
 
         self.logger.info("Scanning for unmapped archive ranges...")
-        tail_end = max(0, self.total_size - TRAILER_SIZE)
+        tail_end = max(0, self.archive.total_size - TRAILER_SIZE)
         merged: List[Tuple[int, int]] = []
 
         for start, length in sorted(self.used_ranges):

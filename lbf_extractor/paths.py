@@ -1,20 +1,33 @@
-"""Output path confinement and safe publication of completed files."""
+"""Output destination policy and atomic file publication."""
 from __future__ import annotations
 
 import os
 import tempfile
 from pathlib import Path
+from typing import Union
 
 from .common import SecurityError
 
 
-class PathMixin:
-    def get_safe_destination(self, virtual_path: str) -> Path:
-        """Return a canonical destination confined to output_dir.
+class OutputManager:
+    """Confine output paths and publish completed files without partial overwrite."""
 
-        Parent traversal is rejected instead of rewritten so suspicious metadata
-        cannot silently map to an unexpected output filename.
-        """
+    def __init__(
+        self,
+        output_dir: Union[str, Path] = "./export",
+        overwrite: bool = False,
+    ) -> None:
+        self.output_dir = Path(output_dir).expanduser().resolve()
+        self.overwrite = overwrite
+
+    def prepare(self) -> None:
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def is_empty(self) -> bool:
+        self.prepare()
+        return next(self.output_dir.iterdir(), None) is None
+
+    def get_safe_destination(self, virtual_path: str) -> Path:
         if not isinstance(virtual_path, str):
             raise SecurityError(
                 f"Output path must be text, got {type(virtual_path).__name__}."
@@ -22,7 +35,6 @@ class PathMixin:
 
         sanitized = virtual_path.replace("\\", "/").strip("/")
         tokens = [token for token in sanitized.split("/") if token not in ("", ".")]
-
         if any(token == ".." for token in tokens):
             raise SecurityError(f"Parent-directory traversal blocked: {virtual_path!r}")
         if not tokens:
@@ -62,21 +74,20 @@ class PathMixin:
         return candidate
 
     def publish_temp_file(self, temporary_path: Path, destination: Path) -> Path:
-        """Publish a fully written temporary file without clobbering by default."""
         if self.overwrite:
             os.replace(temporary_path, destination)
             return destination
 
-        base = destination
         counter = 0
         while True:
             candidate = (
-                base if counter == 0
-                else base.with_name(f"{base.stem}_{counter}{base.suffix}")
+                destination if counter == 0
+                else destination.with_name(
+                    f"{destination.stem}_{counter}{destination.suffix}"
+                )
             )
             try:
-                # Same-directory linking is atomic and cannot overwrite a path
-                # that appeared after get_safe_destination() was called.
+                # Same-directory linking is atomic and never replaces an existing file.
                 os.link(temporary_path, candidate)
             except FileExistsError:
                 counter += 1
@@ -84,13 +95,10 @@ class PathMixin:
             try:
                 os.unlink(temporary_path)
             except OSError:
-                # The output has already been published safely. The caller's
-                # cleanup path will make another best-effort attempt.
                 pass
             return candidate
 
     def write_text_safely(self, virtual_path: str, contents: str) -> Path:
-        """Write UTF-8 text to a temporary file and publish it atomically."""
         destination = self.get_safe_destination(virtual_path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = None

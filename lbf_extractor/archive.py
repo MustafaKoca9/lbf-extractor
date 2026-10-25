@@ -1,23 +1,42 @@
-"""Multipart archive discovery and bounded logical reads."""
+"""Independent reader for single-part and multipart LBF archives."""
 from __future__ import annotations
 
 import io
 import os
 import re
 from pathlib import Path
-from typing import List
+from typing import BinaryIO, Iterator, List, Tuple, Union
 
-from .common import CorruptedArchiveError
+from .common import CHUNK_SIZE, CorruptedArchiveError
 
 
-class ArchiveMixin:
-    def _load_archive_segments(self) -> None:
-        """Open the primary LBF and contiguous numbered segments in logical order.
+class ArchiveReader:
+    """Own archive file handles and expose a logical, bounded byte stream."""
 
-        The standard order is .lbf0, .lbf1, ..., .lbf. Set split_lbf_first to
-        reverse that convention. A numbered gap is rejected rather than silently
-        ignoring later segments and producing a corrupt logical archive.
-        """
+    def __init__(
+        self,
+        archive_path: Union[str, Path],
+        split_lbf_first: bool = False,
+    ) -> None:
+        self.archive_path = Path(archive_path).expanduser().resolve()
+        self.split_lbf_first = split_lbf_first
+        self.part_paths: List[Path] = []
+        self.file_handles: List[BinaryIO] = []
+        self.part_boundaries: List[int] = []
+        self.used_ranges: List[Tuple[int, int]] = []
+        self.total_size = 0
+        self._opened = False
+
+    def open(self) -> "ArchiveReader":
+        if self._opened:
+            return self
+
+        self.part_paths.clear()
+        self.file_handles.clear()
+        self.part_boundaries.clear()
+        self.used_ranges.clear()
+        self.total_size = 0
+
         if not self.archive_path.is_file():
             raise FileNotFoundError(f"Primary LBF archive does not exist: {self.archive_path}")
 
@@ -43,9 +62,7 @@ class ArchiveMixin:
                     f"missing segment(s): {missing}"
                 )
 
-        slices: List[Path] = [
-            slices_by_index[index] for index in sorted(slices_by_index)
-        ]
+        slices = [slices_by_index[index] for index in sorted(slices_by_index)]
         paths = [self.archive_path] + slices if self.split_lbf_first else slices + [self.archive_path]
 
         cumulative = 0
@@ -57,15 +74,36 @@ class ArchiveMixin:
                 cumulative += handle.tell()
                 self.part_boundaries.append(cumulative)
         except OSError:
-            self._cleanup()
+            self.close()
             raise
 
         if cumulative <= 0:
-            self._cleanup()
+            self.close()
             raise CorruptedArchiveError("The archive contains no data.")
 
         self.part_paths = paths
         self.total_size = cumulative
+        self._opened = True
+        return self
+
+    def close(self) -> None:
+        for handle in self.file_handles:
+            try:
+                handle.close()
+            except OSError:
+                pass
+        self.file_handles.clear()
+        self._opened = False
+
+    def __enter__(self) -> "ArchiveReader":
+        return self.open()
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def _ensure_open(self) -> None:
+        if not self._opened:
+            raise RuntimeError("ArchiveReader must be opened before reading.")
 
     def _find_slice_index(self, offset: int) -> int:
         if offset < 0 or offset >= self.total_size:
@@ -77,37 +115,52 @@ class ArchiveMixin:
                 return index
         raise RuntimeError(f"Unable to map logical offset {offset} to a segment")
 
-    def read_bytes(self, offset: int, length: int) -> bytes:
-        """Read exactly length bytes, including when the range crosses segments."""
-        if length < 0 or offset < 0 or offset + length > self.total_size:
+    def iter_range(
+        self,
+        offset: int,
+        length: int,
+        chunk_size: int = CHUNK_SIZE,
+    ) -> Iterator[bytes]:
+        """Yield exactly the requested range in bounded chunks across segments."""
+        self._ensure_open()
+        if not isinstance(chunk_size, int) or isinstance(chunk_size, bool) or chunk_size <= 0:
+            raise ValueError("chunk_size must be a positive integer")
+        if length < 0 or offset < 0 or offset > self.total_size or length > self.total_size - offset:
             raise ValueError(
                 f"Invalid archive range: offset={offset:,}, length={length:,}, "
                 f"archive_size={self.total_size:,}"
             )
-        if length == 0:
-            return b""
 
-        buffer = io.BytesIO()
         remaining = length
         cursor = offset
-
-        while remaining:
+        while remaining > 0:
             index = self._find_slice_index(cursor)
             slice_start = cursor if index == 0 else cursor - self.part_boundaries[index - 1]
             available = self.part_boundaries[index] - cursor
-            take = min(remaining, available)
+            take = min(remaining, available, chunk_size)
 
             handle = self.file_handles[index]
             handle.seek(slice_start)
-            data = handle.read(take)
-            if len(data) != take:
+            chunk = handle.read(take)
+            if not chunk:
                 raise OSError(
                     f"Unexpected early EOF in segment {self.part_paths[index].name!r}."
                 )
 
-            buffer.write(data)
-            cursor += take
-            remaining -= take
+            cursor += len(chunk)
+            remaining -= len(chunk)
+            yield chunk
 
+    def read_bytes(self, offset: int, length: int) -> bytes:
+        """Read a range into memory and record it as consumed metadata bytes."""
+        if length == 0:
+            self._ensure_open()
+            if offset < 0 or offset > self.total_size:
+                raise ValueError(f"Invalid zero-length read at offset {offset}.")
+            return b""
+
+        result = bytearray()
+        for chunk in self.iter_range(offset, length, CHUNK_SIZE):
+            result.extend(chunk)
         self.used_ranges.append((offset, length))
-        return buffer.getvalue()
+        return bytes(result)
