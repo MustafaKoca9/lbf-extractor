@@ -1,81 +1,48 @@
 # Usage examples
 
-## 1. Recover a single-file backup
+This guide complements the main [README](../README.md). Use the same primary `.lbf` path you would pass to the command-line tool.
+
+## 1. Extract a backup
 
 ```bash
-lbf-extractor phone_backup.lbf -o ./recovered
+lbf-extractor phone_backup.lbf --output ./recovered
 ```
 
-Expected output:
+The destination may contain a decrypted header, application packages, reconstructed media paths, categorized records, and (unless disabled) unreferenced byte ranges. Names depend on the backup metadata.
 
-```
-LG Backup Extractor (lbf-extractor) v1.2.1 by Mustafa Koca
-Archive: phone_backup.lbf (1,234.56 MiB across 1 part(s))
-Platform: Linux 6.x | Python: 3.11.7
+## 2. Inspect a multipart backup
 
-[14:22:01] [INF] Security check: archive is unencrypted/unlocked.
-[14:22:01] [INF] Evaluating header architecture format: [NEW]
-...
-┌──────────────────────────────────────────────────────────┐
-│                  EXTRACTION AUDIT REPORT                 │
-├──────────────────────────────────────┬───────────────────┤
-│  Catalog Items Located               │ 1432              │
-│  Files Extracted Successfully        │ 1289              │
-│  Unmapped Forensic Blocks            │ 0                 │
-│  Skipped (Sparse / Null Content)     │ 141               │
-│  Failed Catalog Operations           │ 0                 │
-│  Failed Unmapped Blocks              │ 0                 │
-│  Execution Duration                  │ 12.45s            │
-└──────────────────────────────────────┴───────────────────┘
-```
-
----
-
-2. Split archive
-
-LG Mobile Switch may split a large backup into .lbf0, .lbf1, …, .lbf.
-Point the tool at the .lbf file — it discovers the slices automatically.
+LG Mobile Switch backups may be split into `.lbf0`, `.lbf1`, and `.lbf` parts. The default assembly order is numbered parts first, with `.lbf` last. Pass the primary `.lbf` path:
 
 ```bash
-lbf-extractor phone_backup.lbf -o ./recovered --debug
+lbf-extractor phone_backup.lbf --output ./recovered --debug
 ```
 
---debug prints the assembly order:
-
-```
-[14:22:01] [INF] Multipart slice assembly order:
-[14:22:01] [INF]   [0] phone_backup.lbf0 (2,097,152,000 bytes)
-[14:22:01] [INF]   [1] phone_backup.lbf1 (2,097,152,000 bytes)
-[14:22:01] [INF]   [2] phone_backup.lbf  (1,234,567,890 bytes)
-```
-
-If your backup has .lbf at the beginning:
+For a backup whose `.lbf` segment comes first:
 
 ```bash
 lbf-extractor phone_backup.lbf --split-lbf-first
 ```
 
----
+Review the debug output to confirm the segment order before relying on recovered data.
 
-3. Forensics / raw recovery
+## 3. Keep a forensic log
 
 ```bash
-lbf-extractor phone_backup.lbf -o ./forensics \
-    --debug --log run.log
+lbf-extractor phone_backup.lbf --output ./forensics --debug --log run.log
 ```
 
-Orphaned byte ranges land in forensics/unmapped/, named by byte offsets:
+Use `--no-unmapped` to skip raw ranges that are not referenced by metadata. Otherwise, those ranges are written under `unmapped/` using their byte offsets in the file name. They may require separate carving tools and are not guaranteed to represent complete files.
 
+For plain-text terminal output, set `NO_COLOR=1`:
+
+```bash
+NO_COLOR=1 lbf-extractor phone_backup.lbf --output ./forensics --debug --log run.log
 ```
-unmapped/block_0x000002A0_0x00001FFF.bin
-unmapped/block_0x01234567_0x01234FFF.bin
-```
 
-Carve them with binwalk, foremost, or photorec as usual.
+Redact personal paths and metadata before sharing logs.
 
----
-
-4. Library use
+## 4. Use the Python API
 
 ```python
 from lbf_extractor import LBFExtractor
@@ -88,25 +55,24 @@ with LBFExtractor(
     extract_unmapped=True,
     debug=False,
     log_file="run.log",
-) as ex:
-    ex.execute()
+) as extractor:
+    extractor.execute()
 
-print("extracted:", ex.stats.extracted)
-print("failed:   ", ex.stats.failed)
-for rec in ex.audit_failed:
-    print(rec)
+print("Extracted:", extractor.stats.extracted)
+print("Failed:", extractor.stats.failed)
+
+for record in extractor.audit_failed:
+    print(record)
 ```
 
----
+## 5. Help with a bug report
 
-5. Reproducible runs for bug reports
+Collect the version and environment information:
 
 ```bash
-NO_COLOR=1 lbf-extractor phone_backup.lbf -o /tmp/lbf-out \
-    --debug --log /tmp/lbf-run.log
+lbf-extractor --version
+python --version
+python -c "import platform; print(platform.platform())"
 ```
 
-NO_COLOR=1 disables ANSI escapes so the log file is plain text — helpful when
-pasting into an issue. Redact any personal paths before submitting.
-
-```
+Include the exact command and a redacted `--debug` trace. Do not attach a real backup or recovered personal content. Prefer a synthetic reproduction.

@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lbf-extractor"
+version = "1.2.1"
+description = "Streaming inspector and extractor for LG Mobile Switch .lbf backups"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [{ name = "Mustafa Koca" }]
+keywords = ["lg", "backup", "forensics", "lbf", "data-recovery"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Intended Audience :: End Users/Desktop",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Utilities",
+]
+dependencies = ["pycryptodome>=3.15"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "ruff>=0.5"]
+
+[project.scripts]
+lbf-extractor = "lbf_extractor:main"
+
+[project.urls]
+Homepage = "https://github.com/MustafaKoca9/lbf-extractor"
+Repository = "https://github.com/MustafaKoca9/lbf-extractor"
+Issues = "https://github.com/MustafaKoca9/lbf-extractor/issues"
+
+[tool.setuptools]
+py-modules = ["lbf_extractor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100

@@ -1,75 +1,56 @@
-# Contributing to lbf-extractor
+# Contributing
 
-Thanks for helping! This is a small, focused tool — please keep changes surgical.
+Thanks for helping improve `lbf-extractor`. Please prefer focused, testable changes that preserve the existing CLI and Python API unless a change is intentional and documented.
 
-## Ground rules
+## Before you start
 
-- **Only test on backups you own.** Never attach a real `.lbf` (or parts of it)
-  to an issue or PR. Attach a **synthetic** sample or the *structure* only.
-- Do not add heavy dependencies (`numpy`, `pandas`, etc.). `pycryptodome` is the
-  only runtime dependency.
-- Keep the CLI surface stable. If you add a flag, document it in `README.md` and
-  add it to the argparse help.
+- Work only with backups you own or are authorized to inspect.
+- Never attach a real `.lbf` backup or extracted personal data to an issue or pull request. Use synthetic data.
+- Keep runtime dependencies small. PyCryptodome is the only runtime dependency.
+- For new flags or behavior, update both language versions of the README and the usage examples.
 
-## Local setup
+## Set up a development environment
 
 ```bash
-git clone https://github.com/mustafakoca/lbf-extractor.git
+git clone https://github.com/MustafaKoca9/lbf-extractor.git
 cd lbf-extractor
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[dev]"
 ```
 
-Before opening a PR
+## Checks before a pull request
 
 ```bash
-pytest -v
-ruff check .
-ruff format .          # optional, keeps diffs clean
+pytest -q
 python -m py_compile lbf_extractor.py
+lbf-extractor --version
 ```
 
-· Update CHANGELOG.md under ## [Unreleased].
-· If you change the CLI, update both README.md (CLI reference table) and
-  examples/usage.md.
-· If you bump the version, update it in both places:
-  · lbf_extractor.py → __version__
-  · pyproject.toml → version
+If a change affects CLI behavior, add or update parser tests. If it affects binary parsing, add tests based on synthetic fixtures rather than real personal backups.
 
-Commit messages
+## Project conventions
 
-Use Conventional Commits:
+- Support Python 3.9 and newer.
+- Add type annotations to new public functions and methods.
+- Prefer the standard library; avoid unnecessary runtime dependencies.
+- Keep streaming behavior: do not read an entire large backup into memory.
+- Validate offsets and lengths before reading or writing archive data.
+- Keep extracted paths confined to the requested output directory.
+- Keep README, CLI help, usage examples, and the changelog in sync.
+- Update `__version__` in `lbf_extractor.py` and `version` in `pyproject.toml` together when preparing a release.
 
-```
-feat: add --follow-symlinks flag
-fix: prevent header re-parse when --force-new is set
-docs: clarify --split-lbf-first behaviour
-chore: bump pycryptodome to 3.20
-```
+## Commit messages
 
-Code style
+Use Conventional Commits, for example:
 
-· Python 3.9+, from __future__ import annotations at the top.
-· Type hints on public methods and on every new function.
-· Prefer pathlib.Path for new code; the streaming layer still uses raw file
-  handles by design.
-· No global mutable state beyond the module-level _INSTANCE_COUNTER used for
-  per-instance logger naming.
+- `fix: validate multipart segment boundaries`
+- `docs: clarify recovery output layout`
+- `test: cover malformed header lengths`
+- `chore: update development dependencies`
 
-Reporting bugs
+## Reporting bugs
 
-Please include:
+Include the application version, operating system, Python version, command used, and a redacted debug trace. Do not upload real backups, recovered files, personal paths, or metadata that can identify a device owner.
 
-1. Output of lbf-extractor --version.
-2. OS and Python version (platform.platform()).
-3. The first 64 bytes of the archive, hex-encoded only if you are sure it
-   contains no personal data — for .lbf, that's usually the format marker and
-   an offset, safe to share. When in doubt, skip it.
-4. Full --debug trace (redact any personal paths).
-
-Security
-
-See SECURITY.md for disclosure guidance. Do not file public
-issues for security bugs.
-
-```
+For security vulnerabilities, follow [SECURITY.md](SECURITY.md) and use the private reporting channel rather than a public issue.
