@@ -33,7 +33,7 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
 
       - name: Compile source
-        run: python -m py_compile lbf_extractor.py
+        run: python -m py_compile lbf_extractor/*.py
 
       - name: Run tests
         run: pytest -q
