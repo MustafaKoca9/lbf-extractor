@@ -342,14 +342,14 @@ class LBFExtractor:
     def check_lock_status(self) -> bool:
         return self.metadata.check_lock_status()
 
-    def extract_stream(
+    def extract_payload(
         self,
         target_rel_path: str,
         offset: int,
         length: int,
         is_missed: bool = False,
     ) -> bool:
-        return self.payload.extract_stream(target_rel_path, offset, length, is_missed)
+        return self.payload.extract_payload(target_rel_path, offset, length, is_missed)
 
     def process_items(self) -> None:
         self.payload.process_items(

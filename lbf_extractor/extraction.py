@@ -36,7 +36,7 @@ class PayloadExtractor:
         self.used_ranges = archive.used_ranges
         self.root: Optional[ET.Element] = None
 
-    def extract_stream(
+    def extract_payload(
         self, target_rel_path: str, offset: int, length: int, is_missed: bool = False
     ) -> bool:
         if length <= 0:
@@ -123,7 +123,7 @@ class PayloadExtractor:
                         raw_name = app.get("FileName") or app.get("Name") or "unknown.apk"
                         clean_name = Path(raw_name.replace("\\", "/")).name
                         display_name = f"app/{clean_name}"
-                        self.extract_stream(
+                        self.extract_payload(
                             display_name,
                             int(app.get("StartOffset", "0")),
                             int(app.get("DataSize", "0")),
@@ -140,7 +140,7 @@ class PayloadExtractor:
                     else:
                         destination_name = f"records/{destination_name}"
                     display_name = destination_name
-                    self.extract_stream(
+                    self.extract_payload(
                         destination_name,
                         int(item.get("StartOffset", "0")),
                         int(item.get("DataSize", "0")),
@@ -180,7 +180,7 @@ class PayloadExtractor:
             if start > cursor:
                 length = start - cursor
                 name = f"unmapped/block_0x{cursor:08X}_0x{start - 1:08X}.bin"
-                if self.extract_stream(name, cursor, length, is_missed=True):
+                if self.extract_payload(name, cursor, length, is_missed=True):
                     self.stats.missed_blocks += 1
                     self.audit_missed.append({"name": name, "size": length})
             cursor = max(cursor, end)
@@ -188,6 +188,6 @@ class PayloadExtractor:
         if cursor < tail_end:
             length = tail_end - cursor
             name = f"unmapped/block_0x{cursor:08X}_0x{tail_end - 1:08X}.bin"
-            if self.extract_stream(name, cursor, length, is_missed=True):
+            if self.extract_payload(name, cursor, length, is_missed=True):
                 self.stats.missed_blocks += 1
                 self.audit_missed.append({"name": name, "size": length})
