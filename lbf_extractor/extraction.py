@@ -50,7 +50,6 @@ class PayloadExtractor:
             self.logger.error("Invalid range for %s: %s", target_rel_path, reason)
             return False
 
-        self.used_ranges.append((offset, length))
         try:
             payload = self.archive.read_bytes(offset, length)
             if not payload or not any(payload):
