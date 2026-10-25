@@ -13,6 +13,7 @@ MIN_HEADER_SIZE=1
 TRAILER_SIZE=14
 MIN_LOCK_CHECK_SIZE=33
 ANSI_RE=re.compile(r'\\x1B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])')
+_INSTANCE_COUNTER = 0
 class LBFExtractorError(Exception): pass
 class SecurityError(LBFExtractorError): pass
 class CorruptedArchiveError(LBFExtractorError): pass

@@ -1,4 +1,6 @@
+import io, os
 from pathlib import Path
+from typing import List
 from .common import CorruptedArchiveError
 class ArchiveMixin:
     def _load_archive_segments(self) -> None:

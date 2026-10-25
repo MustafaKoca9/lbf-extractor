@@ -1,3 +1,4 @@
+from __future__ import annotations
 import datetime,logging,os,platform,sys
 from pathlib import Path
 from typing import BinaryIO,Dict,List,Optional,Tuple
@@ -7,6 +8,8 @@ from .paths import PathMixin
 from .metadata import MetadataMixin
 from .extraction import ExtractionMixin
 from .reporting import ReportingMixin
+_INSTANCE_COUNTER = 0
+
 class LBFExtractor(ArchiveMixin,PathMixin,MetadataMixin,ExtractionMixin,ReportingMixin):
     def __init__(
         self,
