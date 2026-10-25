@@ -255,6 +255,7 @@ class LBFExtractor:
         )
         can_fallback = not self.force_new_header and not self.force_old_header
 
+        header_range_start = len(self.archive.used_ranges)
         try:
             self.root, self.common_header = self._parse_candidate(preferred_new)
         except (CorruptedArchiveError, ET.ParseError, struct.error, IndexError) as primary_error:
@@ -274,12 +275,19 @@ class LBFExtractor:
             and is_new_element.text == "True"
         ):
             previous_format = self.header_format
+            ranges_before_realignment = len(self.archive.used_ranges)
             try:
                 new_root, new_common = self._parse_candidate(True)
             except (CorruptedArchiveError, ET.ParseError, struct.error, IndexError) as exc:
                 self.header_format = previous_format
                 self.logger.debug("Automatic header realignment failed: %s", exc)
             else:
+                # Keep only the successful header candidate's byte ranges.
+                # Otherwise an abandoned header interpretation would be counted
+                # as consumed during unmapped-range recovery.
+                new_header_ranges = self.archive.used_ranges[ranges_before_realignment:]
+                del self.archive.used_ranges[header_range_start:]
+                self.archive.used_ranges.extend(new_header_ranges)
                 self.root, self.common_header = new_root, new_common
 
         if self.header_format == "new":
