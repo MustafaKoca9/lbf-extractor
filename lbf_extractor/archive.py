@@ -1,3 +1,4 @@
+import io, os
 from pathlib import Path
 from .common import CorruptedArchiveError
 class ArchiveMixin:
