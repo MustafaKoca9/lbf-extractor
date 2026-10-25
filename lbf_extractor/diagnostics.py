@@ -228,7 +228,7 @@ def write_metadata_report(extractor):
     report = build_metadata_report(extractor)
     json_target = extractor.write_text_safely(
         "metadata_report.json",
-        json.dumps(report, ensure_ascii=False, indent=2) + "\\n",
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n",
     )
 
     lines = [
@@ -261,5 +261,5 @@ def write_metadata_report(extractor):
             "Review and redact personal data before sharing.",
         ]
     )
-    extractor.write_text_safely("metadata_report.md", "\\n".join(lines) + "\\n")
+    extractor.write_text_safely("metadata_report.md", "\n".join(lines) + "\n")
     return json_target

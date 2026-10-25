@@ -27,7 +27,7 @@ class ReportingMixin:
             else 0.0
         )
 
-        print("\\n" + Terminal.style("┌" + "─" * 58 + "┐", Terminal.CYAN))
+        print("\n" + Terminal.style("┌" + "─" * 58 + "┐", Terminal.CYAN))
         heading = "EXTRACTION AUDIT REPORT"
         left_padding = (58 - len(heading)) // 2
         right_padding = 58 - len(heading) - left_padding
@@ -64,7 +64,7 @@ class ReportingMixin:
         print(Terminal.style("└" + "─" * 38 + "┴" + "─" * 19 + "┘", Terminal.CYAN))
 
         if self.audit_failed:
-            print(Terminal.style("\\nFailure Audit Records:", Terminal.RED, Terminal.BOLD))
+            print(Terminal.style("\nFailure Audit Records:", Terminal.RED, Terminal.BOLD))
             for record in self.audit_failed:
                 tag = "[UNMAPPED]" if record.is_unmapped else "[CATALOG] "
                 print(

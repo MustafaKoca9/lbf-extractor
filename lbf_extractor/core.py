@@ -184,10 +184,10 @@ class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, Repo
             Terminal.DIM,
         )
         print(
-            f"{banner} v{__version__} by {__author__}\\n"
+            f"{banner} v{__version__} by {__author__}\n"
             f"Archive: {archive_name} ({self.total_size / (1024 * 1024):,.2f} MiB "
-            f"across {len(self.part_paths)} part(s))\\n"
-            f"{platform_line}\\n"
+            f"across {len(self.part_paths)} part(s))\n"
+            f"{platform_line}\n"
         )
 
         if len(self.part_paths) > 1:

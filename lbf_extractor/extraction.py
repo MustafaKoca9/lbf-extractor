@@ -83,7 +83,6 @@ class ExtractionMixin:
                 return False
 
             destination = self.publish_temp_file(temporary_path, destination)
-            temporary_path = None
 
             if not is_missed:
                 self.stats.extracted += 1
@@ -139,7 +138,7 @@ class ExtractionMixin:
         )
         shortened = filename[:21] + ".." if len(filename) > 23 else filename.ljust(23)
         sys.stdout.write(
-            f"\\r\\x1b[K{Terminal.CYAN}⠸{Terminal.RESET} [{bar}] "
+            f"\r\x1b[K{Terminal.CYAN}⠸{Terminal.RESET} [{bar}] "
             f"{ratio * 100:5.1f}% ({current}/{total}) "
             f"{Terminal.DIM}{shortened}{Terminal.RESET}"
         )
@@ -161,7 +160,7 @@ class ExtractionMixin:
                     apps = item.findall("APPLICATION")
                     for app in apps:
                         raw_name = app.get("FileName") or app.get("Name") or "unknown.apk"
-                        clean_name = Path(raw_name.replace("\\\\", "/")).name
+                        clean_name = Path(raw_name.replace("\\", "/")).name
                         display_name = f"app/{clean_name}"
                         self.extract_stream(
                             display_name,
@@ -192,7 +191,7 @@ class ExtractionMixin:
             self._render_progress(index, len(items), display_name)
 
         if not self.debug and Terminal.enabled() and items:
-            sys.stdout.write("\\r\\x1b[K")
+            sys.stdout.write("\r\x1b[K")
             sys.stdout.flush()
 
     def extract_unmapped_regions(self) -> None:

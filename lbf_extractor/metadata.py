@@ -67,7 +67,7 @@ class MetadataMixin:
 
         encrypted = self.read_bytes(header_start, header_size)
         decrypted = self.decrypt_payload(encrypted)
-        text = decrypted.decode("utf-8", errors="ignore").strip("\\x00 \\r\\n\\t")
+        text = decrypted.decode("utf-8", errors="ignore").strip("\x00 \r\n\t")
 
         xml_start = text.find("<?xml")
         if xml_start < 0:
@@ -115,7 +115,7 @@ class MetadataMixin:
                 f"minimum {MIN_LOCK_CHECK_SIZE})."
             )
 
-        is_locked = self.read_bytes(self.total_size - 1, 1) != b"\\x00"
+        is_locked = self.read_bytes(self.total_size - 1, 1) != b"\x00"
         if is_locked:
             password_sha1 = self.read_bytes(self.total_size - 33, 20).hex()
             self.logger.warning(
