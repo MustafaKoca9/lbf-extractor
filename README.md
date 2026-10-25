@@ -1,181 +1,137 @@
 # lbf-extractor
 
-> **LG Mobile Switch (`.lbf`) backup inspector and forensic extractor.**
+[English](README.md) · [Türkçe](README.tr.md)
 
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)]()
-[![Status](https://img.shields.io/badge/status-stable-brightgreen.svg)]()
+> A streaming inspector and extractor for LG Mobile Switch `.lbf` backups.
 
-A streaming unpacker and decryptor for **LG Mobile Switch** `.lbf` backup archives.
-Recovers application packages, internal databases, media, and forensic orphan
-blocks without loading the entire backup into memory.
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/)
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platforms](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
-> ⚠️ **Use only on backups you own.** This tool is intended for personal data
-> recovery and digital forensics on your own devices. See the [legal](#legal--ethics)
-> section before using it.
+`lbf-extractor` reads LG Mobile Switch backup archives, decrypts their metadata, streams referenced files to an output directory, and can preserve unreferenced byte ranges for forensic review. It is designed to avoid loading the entire archive into memory.
 
----
+**Use only backups you own or are explicitly authorized to examine.** See [SECURITY.md](SECURITY.md) and the [legal notes](#responsible-use).
 
-## Features
+## What it does
 
-- **Streaming architecture** — arbitrary file sizes, split `.lbf` sets supported,
-  ~1 MiB working set regardless of backup size.
-- **Dual header engine** — auto-detects modern header (new `IsNew=True` scheme)
-  and legacy trailer format.
-- **AES-128-ECB decryption** with a SHA-256-derived key and PKCS#7 unpadding.
-- **Path-traversal safe** — token filter *and* canonical `commonpath` confinement;
-  every failure recorded.
-- **Forensic orphan recovery** — unreferenced byte ranges are dumped to
-  `unmapped/block_0x…_0x….bin` for carving.
-- **Zero heavyweight dependencies** — only `pycryptodome`.
+- Streams archive data in 1 MiB chunks, including multipart backups.
+- Detects the newer header layout and the legacy trailer layout.
+- Decrypts the archive metadata with AES-128-ECB and removes valid PKCS#7 padding.
+- Reconstructs media paths when metadata provides enough information.
+- Can write unreferenced byte ranges to `unmapped/` for later forensic analysis.
+- Checks output paths to reduce directory-traversal risk and records extraction failures.
+- Offers both a command-line interface and a Python API.
 
----
+Runtime dependency: [PyCryptodome](https://pypi.org/project/pycryptodome/). Python 3.9 or newer is required.
 
-## Requirements
+## Install
 
-- Python **3.9+**
-- [`pycryptodome`](https://pypi.org/project/pycryptodome/)
+### Install as a command-line tool
 
 ```bash
-pip install pycryptodome
-```
-
----
-
-Installation
-
-As a CLI tool (recommended)
-
-```bash
-git clone https://github.com/mustafakoca/lbf-extractor.git
+git clone https://github.com/MustafaKoca9/lbf-extractor.git
 cd lbf-extractor
-pip install .
+python -m pip install .
 lbf-extractor --help
 ```
 
-As a library
+### Run from a source checkout
+
+```bash
+python -m pip install -r requirements.txt
+python lbf_extractor.py phone_backup.lbf --output ./recovered
+```
+
+## Quick start
+
+```bash
+# Extract a single-file backup
+lbf-extractor phone_backup.lbf --output ./recovered
+
+# Show detailed logs and save them to a file
+lbf-extractor phone_backup.lbf --output ./recovered --debug --log run.log
+
+# Do not write unreferenced byte ranges
+lbf-extractor phone_backup.lbf --output ./recovered --no-unmapped
+
+# If the .lbf file is the first multipart segment
+lbf-extractor phone_backup.lbf --split-lbf-first
+```
+
+For multipart backups, point the program at the `.lbf` file. By default, it looks for adjacent `.lbf0`, `.lbf1`, … segments and assembles them in the usual order: numbered segments first, the `.lbf` file last. Use `--split-lbf-first` only when your backup uses the opposite convention.
+
+## Use as a Python library
 
 ```python
 from lbf_extractor import LBFExtractor
 
-with LBFExtractor("my_backup.lbf", output_dir="./recovered") as ex:
-    ex.execute()
+with LBFExtractor("phone_backup.lbf", output_dir="./recovered") as extractor:
+    extractor.execute()
+
+print("Extracted:", extractor.stats.extracted)
+print("Failed:", extractor.stats.failed)
 ```
 
----
+The context manager closes open segment files and logging handlers. Extraction results and failures are available through `extractor.stats`, `extractor.audit_failed`, and `extractor.audit_missed`.
 
-Quick start
+## Output layout
 
-```bash
-# Single-file backup
-lbf-extractor my_backup.lbf -o ./recovered
+The exact file names depend on the backup metadata. A typical output can include:
 
-# Split backup (.lbf0, .lbf1, …, .lbf)
-lbf-extractor my_backup.lbf -o ./recovered --debug
-
-# Split backup with .lbf as the FIRST segment
-lbf-extractor my_backup.lbf --split-lbf-first
-
-# Forensic mode: keep everything, verbosely
-lbf-extractor my_backup.lbf -o ./recovered --debug --log run.log
-```
-
-Running from source without installing
-
-```bash
-python lbf_extractor.py my_backup.lbf -o ./recovered
-```
-
----
-
-Output layout
-
-```
+```text
 recovered/
-├── header-new.xml                 # decrypted header (kept for auditing)
-├── app/                           # .apk packages
-├── media/                         # reconstructed media paths (CG_ resolution)
-├── records/                       # categorized data records
+├── header-new.xml
+├── app/
+├── media/
+├── records/
 └── unmapped/
-    └── block_0x000002A0_0x00001FFF.bin   # orphan/forensic byte ranges
 ```
 
-Use --no-unmapped to skip the orphan scan, --no-path-reconstruct to
-disable the media/ path inference, or --overwrite to replace existing files
-instead of versioning them (file.txt → file_1.txt).
+The `unmapped/` directory contains raw ranges not referenced by the parsed metadata. These ranges are not guaranteed to be valid or complete files.
 
----
+## Command-line options
 
-CLI reference
+| Option | Description |
+| --- | --- |
+| `file` | Required path to the primary `.lbf` file. |
+| `-o, --output DIR` | Output directory; default: `./export`. |
+| `--no-path-reconstruct` | Disable media path reconstruction. |
+| `--force-new` | Force the newer header format. |
+| `--force-old` | Force the legacy header format. |
+| `--split-lbf-first` | Place the `.lbf` segment before numbered segments. |
+| `--no-unmapped` | Skip recovery of unreferenced ranges. |
+| `--overwrite` | Replace existing output files rather than versioning collisions. |
+| `--debug` | Enable verbose logging. |
+| `--log FILE` | Also write detailed logs to a file. |
+| `-v, --version` | Print the installed version. |
 
-Flag Default Description
-file — Path to .lbf (or primary segment). Required.
--o, --output ./export Output directory.
---no-path-reconstruct off Disable CG-media path inference.
---force-new auto Force new-format header parse.
---force-old auto Force old-format header parse.
---split-lbf-first off Assemble .lbf first (default: .lbf last).
---no-unmapped off Skip orphan raw-block dump.
---overwrite off Overwrite existing files.
---debug off Verbose logging.
---log FILE — Mirror logs to a file.
--v, --version — Print version.
+`--force-new` and `--force-old` cannot be used together. Run `lbf-extractor --help` for the authoritative help text.
 
---force-new and --force-old are mutually exclusive.
-
----
-
-How it works
-
-LG .lbf files store most data in an AES-128-ECB encrypted XML header describing
-BackupItem entries with StartOffset / DataSize pointers into the archive
-body. lbf-extractor:
-
-1. Reads the trailing/leading header pointer depending on format version.
-2. Decrypts the header using sha256(ENC_KEY).digest() as the AES key.
-3. Enumerates BackupItem entries and streams their byte ranges to disk.
-4. Merges all read ranges and dumps leftover ranges as forensic blocks.
-
-The AES key is a fixed constant of the file format as observed in LG Mobile
-Switch output. If LG changes it in a future release, this tool will stop working
-until the new key is extracted.
-
----
-
-Legal & ethics
-
-· Use only on backups you own or have explicit legal authorisation to examine.
-· The encryption key is a documented format constant recovered via reverse
-  engineering of LG Mobile Switch output; no DRM, no protected content, and no
-  other user's data are decrypted by design.
-· The author provides no warranty; results may be incomplete or corrupted.
-  See LICENSE.
-· If you find a security issue in this tool, please read SECURITY.md.
-
----
-
-Development
+## Development
 
 ```bash
-git clone https://github.com/mustafakoca/lbf-extractor.git
-cd lbf-extractor
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-pytest -v
+python -m venv .venv
+. .venv/bin/activate
+python -m pip install -e ".[dev]"
+pytest -q
+python -m py_compile lbf_extractor.py
 ```
 
-See CONTRIBUTING.md for the coding style, commit-message
-convention and PR checklist.
+- [Architecture overview](docs/architecture.md)
+- [Usage examples](examples/usage.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
 
----
+The repository keeps the current extractor in one module to preserve the public import and CLI while the tests and packaging are established. See the architecture guide for boundaries to keep in mind when making larger changes.
 
-Changelog
+## Responsible use
 
-See CHANGELOG.md.
+- Process only backups you own or have explicit permission to inspect.
+- Treat extracted messages, media, databases, XML, and logs as sensitive personal data.
+- Do not publish real backup files, keys, personal paths, or extracted records in issues or pull requests.
+- Extraction may be incomplete or produce damaged files. Always keep an untouched copy of the original backup.
 
----
+## License
 
-License
-
-MIT © Mustafa Koca — see LICENSE.
+MIT. See [LICENSE](LICENSE).
