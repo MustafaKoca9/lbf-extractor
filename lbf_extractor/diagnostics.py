@@ -284,5 +284,5 @@ def write_metadata_report(
             "Review and redact personal data before sharing.",
         ]
     )
-    output.write_text_safely("metadata_report.md", "\n".join(lines) + "\n")
+    output.write_text("metadata_report.md", "\n".join(lines) + "\n")
     return json_target

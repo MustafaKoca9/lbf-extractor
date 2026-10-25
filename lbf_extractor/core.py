@@ -8,7 +8,7 @@ import struct
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import BinaryIO, Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from .archive import ArchiveReader
 from .common import (
@@ -130,10 +130,6 @@ class LBFExtractor:
     @property
     def part_paths(self) -> List[Path]:
         return self.archive.part_paths
-
-    @property
-    def file_handles(self) -> List[BinaryIO]:
-        return self.archive.file_handles
 
     @property
     def part_boundaries(self) -> List[int]:
