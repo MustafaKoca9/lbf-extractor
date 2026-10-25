@@ -1,35 +1,26 @@
 # Architecture
 
-The package uses composition rather than mixins. The CLI is an optional adapter and is not imported by the core API.
+This is a Python library. There is no command-line interface.
 
 | Module | Responsibility |
 | --- | --- |
-| `common.py` | Shared constants, public exceptions, result data models, terminal formatting, and version metadata. |
-| `archive.py` | `ArchiveReader`: owns segment handles, validates segment ordering, and exposes bounded `iter_range()` / `read_bytes()` APIs. |
-| `metadata.py` | `MetadataParser`: decrypts and parses header metadata using an injected archive reader and output manager. |
-| `paths.py` | `OutputManager`: confines paths and atomically publishes completed files. |
-| `extraction.py` | `PayloadExtractor`: interprets catalog ranges, streams payloads, records failures, and recovers unmapped ranges. |
-| `diagnostics.py` | Builds JSON/Markdown metadata reports while retaining raw XML and unknown attributes. |
-| `reporting.py` | Stateless terminal summary formatter. |
-| `core.py` | Public `LBFExtractor` coordinator and compatibility facade. |
-| `cli.py` | Optional command-line argument parsing and exit-code handling. |
+| `common.py` | Shared constants, exceptions, result models, terminal output, and version metadata. |
+| `archive.py` | Reads the full logical archive into memory and provides direct byte-range reads. |
+| `metadata.py` | Decrypts and parses header metadata. |
+| `paths.py` | Resolves output filenames and writes complete byte/text values directly. |
+| `extraction.py` | Extracts complete catalog payload ranges and optionally recovers unmapped ranges. |
+| `diagnostics.py` | Produces JSON/Markdown reports retaining raw XML and unknown attributes. |
+| `reporting.py` | Formats the final summary. |
+| `core.py` | Coordinates the components through the public `LBFExtractor` API. |
 
 ## Data flow
 
-1. `LBFExtractor` opens an `ArchiveReader`, which owns all segment file handles.
-2. `MetadataParser` reads bounded ranges, decrypts the header, and returns the XML tree.
-3. `diagnostics.py` serializes the original tree and records both raw and parsed offset/size values before payload extraction begins.
-4. `PayloadExtractor` iterates the catalog and uses `ArchiveReader.iter_range()` to stream data in configurable chunks.
-5. `OutputManager` writes into same-directory temporary files and publishes completed outputs atomically.
-6. If enabled, the unmapped-range scan merges known ranges and recovers only gaps before the archive trailer.
+1. `ArchiveReader` loads the primary archive and any numbered companion segments into one `bytes` value.
+2. `MetadataParser` reads the header ranges, decrypts the header, and returns its XML tree.
+3. `diagnostics.py` records the raw XML, attributes, and parsed offset/size fields.
+4. `PayloadExtractor` reads each payload range in one operation and writes it as one complete file.
+5. If enabled, the unmapped-range scan recovers gaps not referenced by the catalog.
 
-## Important invariants
+## Trade-off
 
-- Never load the full archive into memory just to extract a payload.
-- Validate offsets and lengths before reading or writing.
-- Do not silently skip gaps in numbered multipart segments.
-- Keep generated reports and extracted user data private; reports can contain personal information.
-- A range that lies within archive bounds is only numerically valid. It may still be interpreted incorrectly for a particular backup format.
-- Keep CLI details out of the core parser and archive reader.
-
-API `chunk_size` is measured in bytes. CLI `--chunk-size-mib` is measured in MiB. Use `--metadata-only` to collect diagnostics without writing payload files.
+This deliberately favors straightforward whole-range processing over streaming. Memory use can approach the size of the complete archive plus the largest payload being written. Use it with enough available RAM for the backup you are inspecting.

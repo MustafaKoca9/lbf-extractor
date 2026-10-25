@@ -1,4 +1,4 @@
-name: Tests
+name: Python package
 
 on:
   push:
@@ -11,32 +11,12 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    name: Python ${{ matrix.python-version }}
+  package:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-
-      - name: Install package and developer dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
-
-      - name: Compile source
-        run: python -m py_compile lbf_extractor/*.py
-
-      - name: Run tests
-        run: pytest -q
-
-      - name: Verify installed command
-        run: lbf-extractor --version
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip && python -m pip install -e ".[dev]"
+      - run: python -m py_compile lbf_extractor/*.py

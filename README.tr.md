@@ -2,13 +2,25 @@
 
 [English](README.md) | [Türkçe](README.tr.md)
 
-LG Mobile Switch LBF yedeklerini incelemek ve kurtarmak için modüler, akış tabanlı kütüphane. Çekirdek API isteğe bağlı CLI arayüzüne bağlı değildir. Başlık çözüldüğünde ham XML yapısını, özgün alanları ve çözülemeyen alanları içeren metadata_report.json ve metadata_report.md üretilir.
+LG Mobile Switch `.lbf` yedeklerini incelemek ve çıkarmak için Python kütüphanesi. API, mantıksal arşivin tamamını belleğe alır ve katalogdaki her payload aralığını tek seferde okuyup dosyaya yazar. Numaralı ek segmentler varsa aynı mantıksal arşivin parçaları olarak birleştirilir.
 
-Kurulum: python -m pip install .
-Dosya çıkarma: lbf-extractor backup.lbf --output ./kurtarilan
-Yalnızca üstveri: lbf-extractor backup.lbf --output ./rapor --metadata-only
-Akış parça boyutu: lbf-extractor backup.lbf --chunk-size-mib 4
+Başlık başarıyla ayrıştırıldığında ham XML'i, özgün alan değerlerini ve çözülemeyen alanları içeren `metadata_report.json` ve `metadata_report.md` dosyaları oluşturulur.
 
-Python API: from lbf_extractor import extract_archive; extract_archive("backup.lbf", "./kurtarilan"). Dosyaları çıkarmadan rapor için extract_archive("backup.lbf", "./rapor", extract_files=False) kullanın. API içindeki chunk_size bayt cinsindendir.
+## Kullanım
 
-Raporlar kişisel veri içerebilir; paylaşmadan önce temizleyin. Mimari: docs/mimari.md. Geliştirme: python -m pip install -e ".[dev]", ardından pytest -q. MIT lisansı.
+```python
+from lbf_extractor import extract_archive
+
+extractor = extract_archive("yedek.lbf", "./kurtarilan")
+print(extractor.stats)
+```
+
+Payload dosyalarını çıkarmadan yalnızca üstveri raporu üretmek için:
+
+```python
+from lbf_extractor import extract_archive
+
+extractor = extract_archive("yedek.lbf", "./rapor", extract_files=False)
+```
+
+Kurulum: `python -m pip install .`. Mimari: `docs/mimari.md`. MIT lisansı.
