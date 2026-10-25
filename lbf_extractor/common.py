@@ -12,7 +12,7 @@ MAX_HEADER_SIZE=20*1024*1024
 MIN_HEADER_SIZE=1
 TRAILER_SIZE=14
 MIN_LOCK_CHECK_SIZE=33
-ANSI_RE=re.compile(r'\\x1B(?:[@-Z\\\\-_]|\\[[0-?]*[ -/]*[@-~])')
+ANSI_RE = re.compile(chr(27) + r"(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])")
 _INSTANCE_COUNTER = 0
 class LBFExtractorError(Exception): pass
 class SecurityError(LBFExtractorError): pass
@@ -33,7 +33,7 @@ class AuditRecord:
  reason:str
  is_unmapped:bool=False
 class Terminal:
- CYAN='\\033[96m'; GREEN='\\033[92m'; YELLOW='\\033[93m'; RED='\\033[91m'; MAGENTA='\\033[95m'; BOLD='\\033[1m'; DIM='\\033[2m'; RESET='\\033[0m'
+ CYAN=chr(27)+"[96m"; GREEN=chr(27)+"[92m"; YELLOW=chr(27)+"[93m"; RED=chr(27)+"[91m"; MAGENTA=chr(27)+"[95m"; BOLD=chr(27)+"[1m"; DIM=chr(27)+"[2m"; RESET=chr(27)+"[0m"
  _initialized=False
  @classmethod
  def init(cls):
