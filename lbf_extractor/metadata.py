@@ -92,7 +92,7 @@ class MetadataParser:
 
         clean_xml = text[xml_start:]
         root = ET.fromstring(clean_xml)
-        self.output.write_text_safely(f"header-{label.lower()}.xml", clean_xml)
+        self.output.write_text(f"header-{label.lower()}.xml", clean_xml)
         self.header_format = "new" if is_new else "old"
         return root
 

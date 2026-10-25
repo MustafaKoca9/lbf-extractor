@@ -14,7 +14,6 @@ from .common import (
     CorruptedArchiveError,
     ExtractionStats,
     LBFExtractorError,
-    SecurityError,
 )
 from .core import LBFExtractor
 from .extraction import PayloadExtractor
@@ -29,8 +28,7 @@ def extract_archive(
 ) -> LBFExtractor:
     """Run an extraction and return the closed extractor with its report/stats.
 
-    Options are forwarded to LBFExtractor, e.g. chunk_size=4 * 1024 * 1024
-    or extract_files=False for metadata-only inspection.
+    Use extract_files=False for metadata-only inspection.
     """
     with LBFExtractor(file_path=file_path, output_dir=output_dir, **options) as extractor:
         extractor.execute()
@@ -47,7 +45,6 @@ __all__ = [
     "ExtractionStats",
     "AuditRecord",
     "LBFExtractorError",
-    "SecurityError",
     "CorruptedArchiveError",
     "__version__",
     "__author__",

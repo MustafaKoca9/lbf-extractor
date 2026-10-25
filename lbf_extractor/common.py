@@ -5,7 +5,6 @@ import datetime
 import logging
 import os
 import platform
-import re
 import sys
 from dataclasses import dataclass
 
@@ -18,21 +17,14 @@ LOGGER_NAME = "lbf_extractor"
 
 # The format uses this fixed passphrase as input to SHA-256 for the AES key.
 ENC_KEY = b"cd562f61-5399-3978-ac76-7c54b0508010"
-CHUNK_SIZE = 1024 * 1024
 MAX_HEADER_SIZE = 20 * 1024 * 1024
 MIN_HEADER_SIZE = 1
 TRAILER_SIZE = 14
 MIN_LOCK_CHECK_SIZE = 33
 
-ANSI_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
-
 
 class LBFExtractorError(Exception):
     """Base class for errors raised by this package."""
-
-
-class SecurityError(LBFExtractorError):
-    """An archive entry resolves outside the selected output directory."""
 
 
 class CorruptedArchiveError(LBFExtractorError):
@@ -100,10 +92,6 @@ class Terminal:
         if not styles or not cls.enabled():
             return text
         return f"{''.join(styles)}{text}{cls.RESET}"
-
-    @classmethod
-    def clean_len(cls, text: str) -> int:
-        return len(ANSI_RE.sub("", text))
 
 
 class ColoredFormatter(logging.Formatter):

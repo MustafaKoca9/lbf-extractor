@@ -249,7 +249,7 @@ def write_metadata_report(
         try_path_reconstruct=try_path_reconstruct,
         resolve_cg_path=resolve_cg_path,
     )
-    json_target = output.write_text_safely(
+    json_target = output.write_text(
         "metadata_report.json",
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
     )

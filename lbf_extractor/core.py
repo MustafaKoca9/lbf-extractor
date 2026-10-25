@@ -12,7 +12,6 @@ from typing import BinaryIO, Dict, List, Optional, Tuple, Union
 
 from .archive import ArchiveReader
 from .common import (
-    CHUNK_SIZE,
     LOGGER_NAME,
     __author__,
     __version__,
@@ -44,18 +43,11 @@ class LBFExtractor:
         extract_unmapped: bool = True,
         debug: bool = False,
         log_file: Optional[Union[str, Path]] = None,
-        chunk_size: int = CHUNK_SIZE,
         extract_files: bool = True,
     ) -> None:
         self.archive_path = Path(file_path).expanduser().resolve()
         if self.archive_path.suffix.lower() != ".lbf":
             raise ValueError(f"Target must have a .lbf extension: {self.archive_path}")
-        if (
-            not isinstance(chunk_size, int)
-            or isinstance(chunk_size, bool)
-            or chunk_size <= 0
-        ):
-            raise ValueError("chunk_size must be a positive integer number of bytes")
         if force_new_header and force_old_header:
             raise ValueError("force_new_header and force_old_header are mutually exclusive")
 
@@ -68,7 +60,6 @@ class LBFExtractor:
         self.extract_unmapped_enabled = extract_unmapped
         self.extract_files_enabled = bool(extract_files)
         self.debug = debug
-        self.chunk_size = chunk_size
 
         self.logger = self._init_logger(debug, log_file)
         self.archive = ArchiveReader(self.archive_path, split_lbf_first=split_lbf_first)
@@ -87,7 +78,6 @@ class LBFExtractor:
             archive=self.archive,
             output=self.output,
             logger=self.logger,
-            chunk_size=self.chunk_size,
             try_path_reconstruct=self.try_path_reconstruct,
             extract_unmapped=self.extract_unmapped_enabled,
             stats=self.stats,
@@ -331,14 +321,11 @@ class LBFExtractor:
     def read_bytes(self, offset: int, length: int) -> bytes:
         return self.archive.read_bytes(offset, length)
 
-    def _find_slice_index(self, offset: int) -> int:
-        return self.archive._find_slice_index(offset)
+    def get_destination(self, relative_path: str) -> Path:
+        return self.output.get_destination(relative_path)
 
-    def get_safe_destination(self, virtual_path: str) -> Path:
-        return self.output.get_safe_destination(virtual_path)
-
-    def write_text_safely(self, virtual_path: str, contents: str) -> Path:
-        return self.output.write_text_safely(virtual_path, contents)
+    def write_text(self, relative_path: str, contents: str) -> Path:
+        return self.output.write_text(relative_path, contents)
 
     @staticmethod
     def strip_pkcs7(payload: bytes) -> bytes:
