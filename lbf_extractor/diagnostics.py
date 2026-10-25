@@ -219,10 +219,6 @@ def build_metadata_report(
         "payload_ranges": payload_ranges,
         "diagnostics": diagnostics,
         "full_header_tree": _node(root) if root is not None else None,
-        "sharing_guidance": (
-            "This report may contain personal identifiers, paths, contacts, "
-            "and message metadata. Redact sensitive data before sharing."
-        ),
     }
 
 
