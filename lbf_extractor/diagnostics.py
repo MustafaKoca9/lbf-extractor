@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Tuple
 import xml.etree.ElementTree as ET
+from typing import Any, Dict, List, Optional, Tuple
 
 from .common import __version__
 
@@ -24,7 +24,7 @@ def _node(element: ET.Element) -> Dict[str, Any]:
 def _range_details(
     attributes: Dict[str, str],
     total_size: int,
-) -> Tuple[Dict[str, Any], Dict[str, Any] | None]:
+) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
     raw_offset = attributes.get("StartOffset")
     raw_size = attributes.get("DataSize")
     details: Dict[str, Any] = {
@@ -112,7 +112,9 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
                     "uninterpreted_attributes": {
                         key: value
                         for key, value in payload_attributes.items()
-                        if key not in {"Category", "FileName", "Name", "StartOffset", "DataSize"}
+                        if key not in {
+                            "Category", "FileName", "Name", "StartOffset", "DataSize"
+                        }
                     },
                     **range_details,
                     "xml": _node(payload_node),
@@ -131,19 +133,24 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
                     )
 
             if "_CG_" in category:
-                resolved = (
-                    extractor.resolve_cg_path(category)
-                    if extractor.try_path_reconstruct
-                    else category
-                )
-                resolution_status = "resolved" if resolved != category else "unresolved"
+                if not extractor.try_path_reconstruct:
+                    resolved = category
+                    resolution_status = "reconstruction_disabled"
+                else:
+                    resolved = extractor.resolve_cg_path(category)
+                    resolution_status = (
+                        "resolved" if resolved != category else "unresolved"
+                    )
                 if resolution_status == "unresolved":
                     diagnostics.append(
                         {
                             "code": "unresolved_cg_path",
                             "item_index": item_index,
                             "category": category,
-                            "message": "The category contains a CG reference that could not be reconstructed.",
+                            "message": (
+                                "The category contains a CG reference that could "
+                                "not be reconstructed."
+                            ),
                         }
                     )
                 path_input = category
@@ -218,15 +225,12 @@ def build_metadata_report(extractor) -> Dict[str, Any]:
 
 def write_metadata_report(extractor):
     """Write the JSON source report and a short Markdown index."""
-    extractor.output_dir.mkdir(parents=True, exist_ok=True)
     report = build_metadata_report(extractor)
-    json_target = extractor.get_safe_destination("metadata_report.json")
-    markdown_target = extractor.get_safe_destination("metadata_report.md")
-
-    json_target.write_text(
+    json_target = extractor.write_text_safely(
+        "metadata_report.json",
         json.dumps(report, ensure_ascii=False, indent=2) + "\\n",
-        encoding="utf-8",
     )
+
     lines = [
         "# Metadata analysis report",
         "",
@@ -257,5 +261,5 @@ def write_metadata_report(extractor):
             "Review and redact personal data before sharing.",
         ]
     )
-    markdown_target.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    extractor.write_text_safely("metadata_report.md", "\\n".join(lines) + "\\n")
     return json_target

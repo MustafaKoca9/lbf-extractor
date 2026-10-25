@@ -44,7 +44,9 @@ class MetadataMixin:
         position = 1 if is_new else self.total_size - 5
         length = struct.unpack("!L", self.read_bytes(position, 4))[0]
         if not MIN_HEADER_SIZE <= length <= MAX_HEADER_SIZE:
-            raise CorruptedArchiveError(f"Header size is outside allowed bounds: {length:,} bytes")
+            raise CorruptedArchiveError(
+                f"Header size is outside allowed bounds: {length:,} bytes"
+            )
         return length
 
     def parse_header(self, is_new: bool) -> ET.Element:
@@ -77,8 +79,7 @@ class MetadataMixin:
         # Parse before writing: an unsuccessful format guess must not leave a
         # misleading header file behind or truncate an existing one.
         root = ET.fromstring(clean_xml)
-        dump_target = self.get_safe_destination(f"header-{label.lower()}.xml")
-        dump_target.write_text(clean_xml, encoding="utf-8")
+        self.write_text_safely(f"header-{label.lower()}.xml", clean_xml)
 
         self.header_format = "new" if is_new else "old"
         return root

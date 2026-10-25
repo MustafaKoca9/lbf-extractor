@@ -49,7 +49,11 @@ class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, Repo
         self.archive_path = Path(file_path).expanduser().resolve()
         if self.archive_path.suffix.lower() != ".lbf":
             raise ValueError(f"Target must have a .lbf extension: {self.archive_path}")
-        if not isinstance(chunk_size, int) or isinstance(chunk_size, bool) or chunk_size <= 0:
+        if (
+            not isinstance(chunk_size, int)
+            or isinstance(chunk_size, bool)
+            or chunk_size <= 0
+        ):
             raise ValueError("chunk_size must be a positive integer number of bytes")
         if force_new_header and force_old_header:
             raise ValueError("force_new_header and force_old_header are mutually exclusive")
@@ -65,19 +69,16 @@ class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, Repo
         self.chunk_size = chunk_size
         self.extract_files_enabled = bool(extract_files)
 
-        # Streaming state. File handles are owned and closed by this instance.
         self.part_paths: List[Path] = []
         self.file_handles: List[BinaryIO] = []
         self.part_boundaries: List[int] = []
         self.total_size = 0
         self.used_ranges: List[Tuple[int, int]] = []
 
-        # Parsed metadata.
         self.root: Optional[ET.Element] = None
         self.common_header: Optional[ET.Element] = None
         self.header_format: Optional[str] = None
 
-        # Extraction results and timestamps.
         self.stats = ExtractionStats()
         self.audit_failed: List[AuditRecord] = []
         self.audit_missed: List[Dict[str, int]] = []
@@ -110,7 +111,14 @@ class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, Repo
                 logger.removeHandler(console)
                 console.close()
                 raise ValueError("The log file must not be the archive itself.")
-            file_handler = logging.FileHandler(resolved_log, mode="w", encoding="utf-8")
+            try:
+                file_handler = logging.FileHandler(
+                    resolved_log, mode="w", encoding="utf-8"
+                )
+            except Exception:
+                logger.removeHandler(console)
+                console.close()
+                raise
             file_handler.setLevel(logging.DEBUG)
             file_handler.setFormatter(
                 logging.Formatter(
@@ -123,24 +131,27 @@ class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, Repo
         return logger
 
     def __enter__(self) -> "LBFExtractor":
-        Terminal.init()
-        self.start_time = datetime.datetime.now()
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        if any(self.output_dir.iterdir()):
-            if self.overwrite:
-                self.logger.warning("Export destination is not empty; matching files may be replaced.")
-            else:
-                self.logger.warning("Export destination is not empty; new files will be versioned.")
-
         try:
+            Terminal.init()
+            self.start_time = datetime.datetime.now()
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+
+            if any(self.output_dir.iterdir()):
+                if self.overwrite:
+                    self.logger.warning(
+                        "Export destination is not empty; matching files may be replaced."
+                    )
+                else:
+                    self.logger.warning(
+                        "Export destination is not empty; new files will be versioned."
+                    )
+
             self._load_archive_segments()
+            self._print_banner()
+            return self
         except Exception:
             self._cleanup()
             raise
-
-        self._print_banner()
-        return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self._cleanup()
@@ -219,9 +230,6 @@ class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, Repo
             )
             self.root, self.common_header = self._parse_candidate(not preferred_new)
 
-        # Some legacy headers carry IsNew=True even though the initial header
-        # layout was successfully parsed. Adopt the realigned candidate only if
-        # it also contains the required Common descriptor.
         is_new_element = self.common_header.find("IsNew")
         if (
             can_fallback
@@ -239,7 +247,6 @@ class LBFExtractor(ArchiveMixin, PathMixin, MetadataMixin, ExtractionMixin, Repo
                 self.root, self.common_header = new_root, new_common
 
         if self.header_format == "new":
-            # The first byte is a format marker, not an unmapped payload range.
             self.used_ranges.append((0, 1))
 
         if self.root is not None:

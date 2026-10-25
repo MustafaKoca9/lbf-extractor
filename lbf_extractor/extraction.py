@@ -1,7 +1,6 @@
 """Payload streaming, catalog traversal, and unmapped-range recovery."""
 from __future__ import annotations
 
-import os
 import sys
 import tempfile
 from pathlib import Path
@@ -31,18 +30,18 @@ class ExtractionMixin:
             self.logger.error("Skipping invalid range for %s: %s", target_rel_path, reason)
             return False
 
+        # Record valid catalog ranges even if a destination path is rejected:
+        # they are still referenced by metadata, not unmapped archive data.
+        self.used_ranges.append((offset, length))
+
         temporary_path: Optional[Path] = None
         try:
             destination = self.get_safe_destination(target_rel_path)
             destination.parent.mkdir(parents=True, exist_ok=True)
 
-            # Catalog ranges should not be rediscovered as orphan data, even if
-            # writing the corresponding output file later fails.
-            self.used_ranges.append((offset, length))
             all_zero = True
             bytes_left = length
             cursor = offset
-
             with tempfile.NamedTemporaryFile(
                 mode="wb",
                 prefix=f".{destination.name}.",
@@ -89,7 +88,8 @@ class ExtractionMixin:
             if not is_missed:
                 self.stats.extracted += 1
             self.logger.debug(
-                "Saved %s (%s bytes)", destination.relative_to(self.output_dir),
+                "Saved %s (%s bytes)",
+                destination.relative_to(self.output_dir),
                 f"{length:,}",
             )
             return True
