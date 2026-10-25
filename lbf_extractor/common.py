@@ -12,7 +12,7 @@ MAX_HEADER_SIZE=20*1024*1024
 MIN_HEADER_SIZE=1
 TRAILER_SIZE=14
 MIN_LOCK_CHECK_SIZE=33
-ANSI_RE = re.compile(chr(27) + r"(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])")
+ANSI_RE = re.compile(chr(27) + r"\[[0-?]*[ -/]*[@-~]")
 _INSTANCE_COUNTER = 0
 class LBFExtractorError(Exception): pass
 class SecurityError(LBFExtractorError): pass
